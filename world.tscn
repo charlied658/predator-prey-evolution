@@ -1,0 +1,50 @@
+[gd_scene format=3 uid="uid://cuvllsx4wtu1v"]
+
+[ext_resource type="Script" uid="uid://ekylbn30pqn5" path="res://scripts/simulation.gd" id="1_tlwt5"]
+[ext_resource type="Script" uid="uid://b3esgx8ytarfa" path="res://scripts/agent.gd" id="2_fj7yv"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_u2d4l"]
+size = Vector3(30, 0.2, 30)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_4dv3d"]
+albedo_color = Color(1, 0, 0, 1)
+
+[sub_resource type="SphereMesh" id="SphereMesh_n048l"]
+material = SubResource("StandardMaterial3D_4dv3d")
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_f3sb7"]
+albedo_color = Color(0, 1, 0, 1)
+
+[sub_resource type="SphereMesh" id="SphereMesh_gv5m4"]
+material = SubResource("StandardMaterial3D_f3sb7")
+
+[node name="World" type="Node3D" unique_id=16426896]
+script = ExtResource("1_tlwt5")
+capture_distance = null
+encounter_duration = null
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=932398708]
+transform = Transform3D(1, 0, 0, 0, 0.70710677, 0.70710677, 0, -0.70710677, 0.70710677, 0, 20, 18)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=676536562]
+transform = Transform3D(0.8660254, -0.35355338, 0.35355338, 0, 0.70710677, 0.70710677, -0.5, -0.6123724, 0.6123724, 0, 0, 0)
+
+[node name="Arena" type="MeshInstance3D" parent="." unique_id=2140552007]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+mesh = SubResource("BoxMesh_u2d4l")
+
+[node name="Predator" type="Node3D" parent="." unique_id=1560794022 node_paths=PackedStringArray("opponent")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0, 0)
+script = ExtResource("2_fj7yv")
+opponent = NodePath("../Prey")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Predator" unique_id=1581176935]
+mesh = SubResource("SphereMesh_n048l")
+
+[node name="Prey" type="Node3D" parent="." unique_id=1373045176 node_paths=PackedStringArray("opponent")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 0)
+script = ExtResource("2_fj7yv")
+opponent = NodePath("../Predator")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Prey" unique_id=381371209]
+mesh = SubResource("SphereMesh_gv5m4")

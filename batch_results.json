@@ -1,0 +1,172 @@
+{
+	"results": [
+		{
+			"captured": true,
+			"encounter": 0,
+			"final_distance": 0.998816311359406,
+			"predator_fitness": 115.983333333333,
+			"prey_fitness": 4.01666666666666,
+			"time": 4.01666666666666
+		},
+		{
+			"captured": false,
+			"encounter": 1,
+			"final_distance": 35.349479675293,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		},
+		{
+			"captured": true,
+			"encounter": 2,
+			"final_distance": 0.993466377258301,
+			"predator_fitness": 110.866666666667,
+			"prey_fitness": 9.13333333333337,
+			"time": 9.13333333333337
+		},
+		{
+			"captured": false,
+			"encounter": 3,
+			"final_distance": 20.1440982818604,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		},
+		{
+			"captured": true,
+			"encounter": 4,
+			"final_distance": 0.993282318115234,
+			"predator_fitness": 110.816666666667,
+			"prey_fitness": 9.18333333333337,
+			"time": 9.18333333333337
+		},
+		{
+			"captured": true,
+			"encounter": 5,
+			"final_distance": 0.983830451965332,
+			"predator_fitness": 110.766666666667,
+			"prey_fitness": 9.23333333333337,
+			"time": 9.23333333333337
+		},
+		{
+			"captured": true,
+			"encounter": 6,
+			"final_distance": 0.991851568222046,
+			"predator_fitness": 117.666666666667,
+			"prey_fitness": 2.33333333333333,
+			"time": 2.33333333333333
+		},
+		{
+			"captured": false,
+			"encounter": 7,
+			"final_distance": 17.8661785125732,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		},
+		{
+			"captured": true,
+			"encounter": 8,
+			"final_distance": 0.951720595359802,
+			"predator_fitness": 117.683333333333,
+			"prey_fitness": 2.31666666666666,
+			"time": 2.31666666666666
+		},
+		{
+			"captured": false,
+			"encounter": 9,
+			"final_distance": 28.0,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		},
+		{
+			"captured": true,
+			"encounter": 10,
+			"final_distance": 0.943554699420929,
+			"predator_fitness": 117.583333333333,
+			"prey_fitness": 2.41666666666666,
+			"time": 2.41666666666666
+		},
+		{
+			"captured": false,
+			"encounter": 11,
+			"final_distance": 39.5979804992676,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		},
+		{
+			"captured": false,
+			"encounter": 12,
+			"final_distance": 10.7764711380005,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		},
+		{
+			"captured": false,
+			"encounter": 13,
+			"final_distance": 25.0509548187256,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		},
+		{
+			"captured": false,
+			"encounter": 14,
+			"final_distance": 34.2931175231934,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		},
+		{
+			"captured": true,
+			"encounter": 15,
+			"final_distance": 0.952206552028656,
+			"predator_fitness": 117.516666666667,
+			"prey_fitness": 2.48333333333333,
+			"time": 2.48333333333333
+		},
+		{
+			"captured": true,
+			"encounter": 16,
+			"final_distance": 0.99747222661972,
+			"predator_fitness": 117.7,
+			"prey_fitness": 2.3,
+			"time": 2.3
+		},
+		{
+			"captured": false,
+			"encounter": 17,
+			"final_distance": 39.5979804992676,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		},
+		{
+			"captured": false,
+			"encounter": 18,
+			"final_distance": 25.3315887451172,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		},
+		{
+			"captured": false,
+			"encounter": 19,
+			"final_distance": 10.4071598052979,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		},
+		{
+			"captured": false,
+			"encounter": 20,
+			"final_distance": 28.0,
+			"predator_fitness": 0.0,
+			"prey_fitness": 20.0000000000001,
+			"time": 20.0000000000001
+		}
+	]
+}
