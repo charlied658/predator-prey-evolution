@@ -15,6 +15,9 @@ var minimum_distance := 0.0
 var predator_boundary_time := 0.0
 var prey_boundary_time := 0.0
 var predator_path_length := 0.0
+var initial_distance := 0.0
+var distance_integral := 0.0
+var approach_integral := 0.0
 
 func _ready() -> void:
 	var args = OS.get_cmdline_user_args()
@@ -56,6 +59,8 @@ func start_encounter() -> void:
 	predator.set_genome(config.get("predator_genome", []))
 	prey.set_genome(config.get("prey_genome", []))
 	predator.controller = "neural"
+	predator.sensor_mode = config.get("predator_sensor_mode", "legacy")
+	prey.sensor_mode = "legacy"
 	prey.controller = config.get("prey_controller", "neural")
 	if predator.genome.size() != 66 or (prey.controller == "neural" and prey.genome.size() != 66):
 		fail("Neural controllers require 66 weights")
@@ -71,6 +76,9 @@ func start_encounter() -> void:
 	prey.velocity = Vector3.ZERO
 	elapsed_time = 0.0
 	minimum_distance = predator.global_position.distance_to(prey.global_position)
+	initial_distance = minimum_distance
+	distance_integral = 0.0
+	approach_integral = 0.0
 	predator_boundary_time = 0.0
 	prey_boundary_time = 0.0
 	predator_path_length = 0.0
@@ -85,9 +93,12 @@ func _physics_process(delta: float) -> void:
 	predator.velocity = pv
 	prey.velocity = qv
 	var previous: Vector3 = predator.global_position
+	var toward: Vector3 = (prey.global_position - previous).normalized()
 	predator.advance(delta)
 	prey.advance(delta)
 	predator_path_length += previous.distance_to(predator.global_position)
+	# Actual predator movement toward the target, excluding prey movement and wall pushing.
+	approach_integral += (predator.global_position - previous).dot(toward) / predator.speed
 	elapsed_time += delta
 	if maxf(absf(predator.position.x), absf(predator.position.z)) >= 13.9:
 		predator_boundary_time += delta
@@ -95,6 +106,7 @@ func _physics_process(delta: float) -> void:
 		prey_boundary_time += delta
 	var distance = predator.global_position.distance_to(prey.global_position)
 	minimum_distance = minf(minimum_distance, distance)
+	distance_integral += distance * delta
 	if distance <= capture_distance or elapsed_time + 0.000001 >= encounter_duration:
 		end_encounter(distance <= capture_distance, distance)
 
@@ -104,6 +116,9 @@ func end_encounter(captured: bool, distance: float) -> void:
 		"encounter": current_encounter,
 		"captured": captured, "time": elapsed_time,
 		"final_distance": distance, "minimum_distance": minimum_distance,
+		"initial_distance": initial_distance,
+		"mean_distance": distance_integral / elapsed_time,
+		"approach_alignment": approach_integral / elapsed_time,
 		"predator_boundary_time": predator_boundary_time,
 		"prey_boundary_time": prey_boundary_time,
 		"predator_path_length": predator_path_length,

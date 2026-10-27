@@ -18,6 +18,16 @@ def genome(rng):
     return [rng.uniform(-1, 1) for _ in range(GENOME_LENGTH)]
 
 
+def pursuit_genome(rng):
+    weights = genome(rng)
+    # Start without arbitrary preferred directions. These weights can still mutate.
+    for i in range(8):
+        weights[i * 6 + 4] = 0.0  # Distance is unsigned; avoid an initial directional offset.
+        weights[i * 6 + 5] = 0.0
+    weights[56] = weights[65] = 0.0
+    return weights
+
+
 def scenario(rng):
     while True:
         p = [rng.uniform(-12, 12), rng.uniform(-12, 12)]
@@ -44,10 +54,16 @@ def evaluate(population, cases, workers):
     return [rows[i:i + size] for i in range(0, len(rows), size)]
 
 
-def fitness(row, shaping):
+def fitness(row, shaping, pursuit=False):
     # Capture remains dominant within each encounter; shaping only distinguishes failures.
-    if row["captured"] or not shaping:
+    if row["captured"]:
         return row["predator_fitness"]
+    if pursuit:
+        # Sustained closeness and the predator's own useful motion, not one lucky near pass.
+        proximity = max(-1, 1 - row["mean_distance"] / max(row["initial_distance"], 1))
+        return 10 * proximity + 5 * row["approach_alignment"]
+    if not shaping:
+        return 0
     return 1 / (1 + row["minimum_distance"])
 
 
@@ -70,15 +86,19 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-def breed(population, scores, rng):
+def breed(population, scores, rng, crossover=True):
     ranked = sorted(range(len(population)), key=lambda i: scores[i], reverse=True)
     children = [population[i][:] for i in ranked[:2]]
     def select():
         candidates = rng.sample(range(len(population)), min(3, len(population)))
         return population[max(candidates, key=lambda i: scores[i])]
     while len(children) < len(population):
-        a, b = select(), select()
-        child = [x if rng.random() < 0.5 else y for x, y in zip(a, b)]
+        a = select()
+        if crossover:
+            b = select()
+            child = [x if rng.random() < 0.5 else y for x, y in zip(a, b)]
+        else:
+            child = a[:]
         children.append([x + rng.gauss(0, 0.2) if rng.random() < 0.1 else x for x in child])
     return children
 
@@ -88,7 +108,11 @@ def train(args, condition, seed, validation, test):
     folder.mkdir(parents=True, exist_ok=True)
     checkpoint = folder / "checkpoint.json"
     rng = random.Random(seed)
-    population = [genome(rng) for _ in range(args.population)]
+    pursuit = getattr(args, "training_mode", "legacy") == "pursuit"
+    population = [(pursuit_genome if pursuit else genome)(rng) for _ in range(args.population)]
+    if pursuit:
+        validation = [{**case, "predator_sensor_mode": "bearing"} for case in validation]
+        test = [{**case, "predator_sensor_mode": "bearing"} for case in test]
     opponent_rng = random.Random(seed + 1_000_000)
     opponents = [genome(opponent_rng) for _ in range(args.pool_size)]
     history = []
@@ -111,13 +135,23 @@ def train(args, condition, seed, validation, test):
         for episode in range(args.episodes):
             # Same starts in both conditions, opponent pool sampled on a separate RNG.
             opponent_index = random.Random(seed * 100_003 + generation * args.episodes + episode).randrange(args.pool_size)
-            cases.append({**scenario(cases_rng), "prey_genome": opponents[0 if condition == "fixed" else opponent_index]})
+            case = {**scenario(cases_rng), "prey_genome": opponents[0 if condition == "fixed" else opponent_index]}
+            # First third teaches pursuit in all directions; retain anchors afterward.
+            if pursuit and (generation < max(1, args.generations // 3) or episode % 2 == 0):
+                case["prey_controller"] = "stationary"
+            if pursuit:
+                case["predator_sensor_mode"] = "bearing"
+            cases.append(case)
         evaluated = evaluate(population, cases, args.workers)
-        scores = [statistics.mean(fitness(row, args.shaping) for row in rows) for rows in evaluated]
+        scores = [statistics.mean(fitness(row, args.shaping, pursuit) for row in rows) for rows in evaluated]
         winner = max(range(len(population)), key=lambda i: scores[i])
         # Selection of the saved champion uses validation only, never the final test suite.
         validation_rows = evaluate([population[winner]], validation, args.workers)[0]
-        validation_score = metrics(validation_rows)["capture_rate"]
+        # Capture rate remains primary; ties prefer faster captures and better pursuit.
+        validation_score = (metrics(validation_rows)["capture_rate"],
+                            statistics.mean(fitness(row, args.shaping, pursuit) for row in validation_rows)) if pursuit else metrics(validation_rows)["capture_rate"]
+        if pursuit and isinstance(champion_score, list):
+            champion_score = tuple(champion_score)
         if champion is None or validation_score > champion_score:
             champion = population[winner][:]
             champion_score = validation_score
@@ -125,13 +159,13 @@ def train(args, condition, seed, validation, test):
                         "training_encounters": (generation + 1) * args.population * args.episodes,
                         "total_selection_encounters": (generation + 1) * (args.population * args.episodes + len(validation)),
                         "best_training_fitness": max(scores), "mean_training_fitness": statistics.mean(scores),
-                        "validation_capture_rate": validation_score,
-                        "champion_validation_capture_rate": champion_score})
-        population = breed(population, scores, rng)
+                        "validation_capture_rate": validation_score[0] if pursuit else validation_score,
+                        "champion_validation_capture_rate": champion_score[0] if pursuit else champion_score})
+        population = breed(population, scores, rng, crossover=not pursuit)
         write_json(checkpoint, {"next_generation": generation + 1, "population": population,
                                "rng_state": rng.getstate(), "history": history,
                                "champion": champion, "champion_score": champion_score})
-        print(f"{condition} seed={seed} generation={generation + 1} validation={validation_score:.3f}", flush=True)
+        print(f"{condition} seed={seed} generation={generation + 1} validation={history[-1]['validation_capture_rate']:.3f}", flush=True)
     final_rows = evaluate([champion], test, args.workers)[0]
     raw = [{**case, **row} for case, row in zip(test, final_rows)]
     write_json(folder / "test_encounters.json", raw)
@@ -215,6 +249,8 @@ def main():
     parser.add_argument("--test-per-kind", type=int, default=50)
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--shaping", action="store_true")
+    parser.add_argument("--training-mode", choices=["legacy", "pursuit"], default="pursuit",
+                        help="Pursuit adds stationary-target curriculum, dense feedback, and mutation-only reproduction")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     for name in ["runs", "population", "generations", "episodes", "pool_size", "validation_per_kind", "test_per_kind", "workers"]:

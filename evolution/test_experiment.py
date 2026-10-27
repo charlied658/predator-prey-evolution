@@ -7,8 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from experiment import bootstrap, breed, evaluate, fitness, metrics, scenario, suite, train
+from experiment import bootstrap, breed, evaluate, fitness, metrics, pursuit_genome, scenario, suite, train
 from godot_interface import evaluate_batch
+from replay import resolve_controller
 
 
 class ExperimentTests(unittest.TestCase):
@@ -30,6 +31,14 @@ class ExperimentTests(unittest.TestCase):
         self.assertIsNone(bootstrap([0.5]))
         self.assertEqual(bootstrap([1, 1, 1]), [1, 1])
 
+    def test_pursuit_reward_rejects_lucky_pass_and_wall_pushing(self):
+        def row(mean, alignment):
+            return {'captured': False, 'predator_fitness': 0, 'minimum_distance': 0.1,
+                    'initial_distance': 10, 'mean_distance': mean, 'approach_alignment': alignment}
+        self.assertGreater(fitness(row(3, 0.8), False, True), fitness(row(12, 0), False, True))
+        self.assertEqual(fitness(row(10, 0), False, True), 0)
+        self.assertLess(fitness(row(15, -0.5), False, True), 0)
+
     def test_elites_preserved_without_aliasing(self):
         population = [[float(i)] * 66 for i in range(5)]
         result = breed(population, [0, 1, 2, 3, 4], random.Random(2))
@@ -37,13 +46,37 @@ class ExperimentTests(unittest.TestCase):
         result[0][0] = 999
         self.assertEqual(population[4][0], 4)
 
+    def test_pursuit_initialization_and_explicit_replay_selection(self):
+        weights = pursuit_genome(random.Random(1))
+        self.assertEqual(len(weights), 66)
+        for i in range(8):
+            self.assertEqual(weights[i * 6 + 4:i * 6 + 6], [0, 0])
+        self.assertEqual([weights[56], weights[65]], [0, 0])
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for seed, validation in [(1, 0.25), (2, 0.75)]:
+                folder = root / f'diverse-seed-{seed}'
+                folder.mkdir()
+                (folder / 'best_predator.json').write_text('{}')
+                (folder / 'report.json').write_text(json.dumps({'history': [{'champion_validation_capture_rate': validation}]}))
+            self.assertEqual(resolve_controller(root, 'diverse', None).parent.name, 'diverse-seed-2')
+            self.assertEqual(resolve_controller(root, 'diverse', 1).parent.name, 'diverse-seed-1')
+            with self.assertRaises(ValueError):
+                resolve_controller(root, 'fixed', None)
+
 
 class GodotIntegrationTests(unittest.TestCase):
     def test_interrupted_resume_matches_uninterrupted_training(self):
+        for mode in ['legacy', 'pursuit']:
+            with self.subTest(mode=mode):
+                self.check_resume(mode)
+
+    def check_resume(self, mode):
         with tempfile.TemporaryDirectory() as directory:
             args = SimpleNamespace(output=Path(directory) / 'full', population=3,
                                    pool_size=2, resume=False, generations=2,
-                                   episodes=1, workers=1, shaping=False)
+                                   episodes=1, workers=1, shaping=False, training_mode=mode)
             validation, test = suite(123, 1), suite(456, 1)
             expected = train(args, 'diverse', 37, validation, test)
             args.output = Path(directory) / 'interrupted'
@@ -84,9 +117,12 @@ class GodotIntegrationTests(unittest.TestCase):
         self.assertFalse(serial[0]['captured'])
         self.assertAlmostEqual(serial[0]['time'], 20, places=4)
         self.assertEqual(serial[0]['minimum_distance'], 10)
+        self.assertAlmostEqual(serial[0]['mean_distance'], 10, places=4)
+        self.assertEqual(serial[0]['approach_alignment'], 0)
         self.assertTrue(serial[1]['captured'])
         self.assertAlmostEqual(serial[1]['time'], 3, delta=1 / 60 + 0.001)
         self.assertAlmostEqual(serial[1]['predator_path_length'], 9, delta=0.06)
+        self.assertAlmostEqual(serial[1]['approach_alignment'], 1, places=4)
         self.assertGreater(serial[2]['prey_boundary_time'], 15)
         self.assertGreater(serial[3]['prey_boundary_time'], 16)
         self.assertEqual(metrics([serial[0]])['capture_time'], None)

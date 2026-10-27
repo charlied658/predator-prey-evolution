@@ -8,6 +8,7 @@ const ARENA_LIMIT: float = 14.0
 var genome: Array = []
 var velocity: Vector3 = Vector3.ZERO
 var controller: String = "neural"
+var sensor_mode: String = "legacy"
 
 
 func set_genome(new_genome: Array) -> void:
@@ -28,10 +29,13 @@ func choose_velocity() -> Vector3:
 
 	# Sensory inputs
 	var relative_position = opponent.global_position - global_position
+	var sensed_position = relative_position / 30.0
+	if sensor_mode == "bearing":
+		sensed_position = relative_position.normalized()
 
 	var inputs = [
-		relative_position.x / 30.0,
-		relative_position.z / 30.0,
+		sensed_position.x,
+		sensed_position.z,
 		opponent.velocity.x / 3.0,
 		opponent.velocity.z / 3.0,
 		relative_position.length() / 30.0
