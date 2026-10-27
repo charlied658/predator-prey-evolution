@@ -1,6 +1,12 @@
 # Predator–Prey Evolution
 
-A Godot simulation with Python evolutionary neural controllers and a reproducible fixed-prey versus diverse-prey study. Python uses only the standard library.
+**Current focus: competitive coevolution.** Both predator and prey evolve in an obstacle arena, with archived opponents, generation matchups, and an interactive history viewer. See [COEVOLUTION.md](COEVOLUTION.md) for the prepared demo, training commands, and methods.
+
+```powershell
+python evolution/coevolution.py replay results/coevolution-demo
+```
+
+Python uses only the standard library. The fixed-prey versus diverse-prey experiments below remain available as earlier baselines.
 
 ## Setup
 
