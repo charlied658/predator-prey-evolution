@@ -20,8 +20,6 @@ material = SubResource("StandardMaterial3D_f3sb7")
 
 [node name="World" type="Node3D" unique_id=16426896]
 script = ExtResource("1_tlwt5")
-capture_distance = null
-encounter_duration = null
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=932398708]
 transform = Transform3D(1, 0, 0, 0, 0.70710677, 0.70710677, 0, -0.70710677, 0.70710677, 0, 20, 18)

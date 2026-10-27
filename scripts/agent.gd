@@ -7,15 +7,24 @@ const ARENA_LIMIT: float = 14.0
 
 var genome: Array = []
 var velocity: Vector3 = Vector3.ZERO
+var controller: String = "neural"
 
 
 func set_genome(new_genome: Array) -> void:
 	genome = new_genome
 
 
-func _physics_process(delta: float) -> void:
-	if opponent == null or genome.size() != 66:
-		return
+func choose_velocity() -> Vector3:
+	if opponent == null:
+		return Vector3.ZERO
+	if controller == "stationary":
+		return Vector3.ZERO
+	if controller == "straight":
+		return Vector3(0, 0, speed)
+	if controller == "flee":
+		return (global_position - opponent.global_position).normalized() * speed
+	if genome.size() != 66:
+		return Vector3.ZERO
 
 	# Sensory inputs
 	var relative_position = opponent.global_position - global_position
@@ -65,8 +74,10 @@ func _physics_process(delta: float) -> void:
 	if direction.length() > 1.0:
 		direction = direction.normalized()
 
-	velocity = direction * speed
+	return direction * speed
 
+
+func advance(delta: float) -> void:
 	global_position += velocity * delta
 
 	global_position.x = clampf(global_position.x, -ARENA_LIMIT, ARENA_LIMIT)

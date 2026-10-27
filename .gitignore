@@ -2,3 +2,5 @@
 .godot/
 /android/
 evolution/config.json
+__pycache__/
+results/

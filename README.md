@@ -1,159 +1,103 @@
 # Predator–Prey Evolution
 
-A Godot + Python simulation for experimenting with evolutionary neural-network controllers in predator–prey encounters. Godot runs the encounters; Python evaluates fitness and evolves predator controllers using a genetic algorithm.
+A Godot simulation with Python evolutionary neural controllers and a reproducible fixed-prey versus diverse-prey study. Python uses only the standard library.
 
-## Requirements
+## Setup
 
-- **Godot 4.x** (the executable, not just the project editor)
-- **Python 3.10+**
-- Windows, macOS, or Linux
-
-The current Python scripts use only the standard library; no `pip install` is required.
-
-## Project layout
-
-The expected layout is:
-
-```text
-PredatorPreyEvolution/
-├── godot/                  # Godot project (contains project.godot)
-├── evolution/
-│   ├── config.py
-│   ├── config.example.json
-│   ├── config.json         # Local paths; do not commit
-│   ├── godot_interface.py
-│   ├── genetic_algorithm.py
-│   ├── replay.py
-│   ├── test_batch.py
-│   └── test_generalization.py
-└── .gitignore
-```
-
-Your repository may use different folder names. The important part is that `project_path` points to the folder containing **`project.godot`**.
-
-## 1. Get the project
-
-Clone the repository and open it in your editor:
-
-```bash
-git clone <REPOSITORY_URL>
-cd PredatorPreyEvolution
-```
-
-Replace `<REPOSITORY_URL>` with the actual GitHub repository URL.
-
-## 2. Configure local paths
-
-Copy the example configuration:
-
-**PowerShell (Windows):**
+Requires Godot 4.x and Python 3.10+. Open `project.godot` once in Godot to import the project. From the repository root:
 
 ```powershell
-Copy-Item evolution/config.example.json evolution/config.json
+Copy-Item evolution/config.json.example evolution/config.json
 ```
 
-**macOS / Linux:**
+Edit the local JSON with absolute paths to the Godot executable and the directory containing `project.godot`. This configuration is ignored by Git. Commands below assume `python` points to a working Python installation; use `py` or the full executable path if needed.
 
-```bash
-cp evolution/config.example.json evolution/config.json
+## Start with a small experiment
+
+Run all commands from the repository root:
+
+```powershell
+python evolution/experiment.py --output results/quick --runs 2 --population 8 --generations 4 --episodes 4 --validation-per-kind 2 --test-per-kind 4 --workers 2
 ```
 
-Edit `evolution/config.json`:
+For the default study (10 paired runs, 30 individuals, 30 generations, 8 training encounters per individual):
 
-```json
-{
-  "godot_path": "C:/path/to/Godot.exe",
-  "project_path": "C:/path/to/PredatorPreyEvolution/godot"
-}
+```powershell
+python evolution/experiment.py --output results/study --workers 2
 ```
 
-- `godot_path`: full path to your Godot executable.
-- `project_path`: full path to the Godot project directory (the folder containing `project.godot`).
-- On Windows, forward slashes work well in JSON paths.
-- `config.json` is machine-specific and should be excluded by `.gitignore`; **do not commit it**.
+Benchmark a small run before committing to the full study. The default study runs 167,200 encounters including validation and final testing; hardware and process startup costs affect runtime. Workers split each batch across separate headless Godot processes and preserve input order. Each process uses isolated temporary files. Avoid launching more workers than your machine can handle comfortably.
 
-## 3. Check the Godot project
+Resume an interrupted study using the **same command and settings**, adding `--resume`. A checkpoint is saved after each completed generation. A partially completed generation is repeated. Source hashes and experiment settings must match; use a new output folder after changing code or settings. Do not run two invocations into the same output directory.
 
-Open the Godot project in the editor and confirm that `world.tscn` is configured as the main scene (**Project → Project Settings → Application → Run**). The world contains a predator and prey, both controlled by neural networks.
+## What the experiment compares
 
-The batch simulation reads genome arrays from JSON and writes encounter results to JSON. The Python interface starts Godot in headless mode to run these encounters quickly.
+**Question:** Does training against a diverse pool of prey improve generalization compared with training against one fixed prey?
 
-## 4. Run a batch test
+- `fixed`: one randomly generated neural prey controller per training seed.
+- `diverse`: a pool of `--pool-size` neural prey controllers (default 8), sampled independently for each encounter. The fixed prey is the first member of that same pool.
+- Both methods receive identical initial predator populations, starting-position schedules, number of training encounters, and validation budgets for each seed.
+- Starts are sampled inside [-12, 12] on both axes, with initial separation between 5 and 20. Movement is clamped at arena coordinates ±14.
+- Every candidate in a generation faces the same cases. New training cases are sampled each generation.
+- Both agents decide using the same previous-step state, then move simultaneously at a fixed 60 Hz. Speed limits are equal (3 units/second); capture radius is 1 and timeout is 20 seconds.
+- Neural controllers have 5 inputs, 8 hidden neurons, 2 outputs, and 66 evolved weights/biases. There are no headings; movement outputs are world-axis velocities.
+- Genetic operators retain the original settings: tournament size 3, uniform crossover, per-weight Gaussian mutation probability 0.1 and standard deviation 0.2, and 2 elites.
 
-From the repository root:
+Training fitness is the mean encounter reward: `100 + (20 - capture_time)` on capture, zero otherwise. Optional `--shaping` gives failed encounters `1 / (1 + minimum_distance)`. Use separate output directories to compare shaping conditions. Capture dominates within an encounter, but averaged fitness can trade capture frequency against capture speed.
 
-```bash
-cd evolution
-python test_batch.py
+Each generation's training winner is evaluated on a fixed validation suite. The saved champion is the candidate with the highest validation capture rate; ties keep the earlier candidate. Validation therefore participates in model selection and is **not** an unbiased test. The final test suite is used only after training. Validation and test suites have distinct fixed seeds and include equal numbers of:
+
+1. New random neural controllers (a separate controller per case).
+2. Stationary prey.
+3. Prey moving along the positive z axis.
+4. Prey fleeing directly away from the predator.
+
+Scripted prey are evaluation-only. Straight prey eventually stop against the boundary; direct-flee prey can become trapped. They are reference behaviors, not optimal adversaries. Shared test cases make comparisons paired, and the saved suite files make the evaluation inspectable. Do not tune repeatedly against test results; create a new untouched final suite if using these results for exploratory development.
+
+## Outputs and interpretation
+
+Each study folder contains:
+
+- `experiment.json`, `source_hashes.json`: settings and implementation fingerprints.
+- `validation_suite.json`, `test_suite.json`: explicit evaluation scenarios.
+- `runs.csv`: one row per independently trained controller, including capture rate, capture-only duration, minimum distance, path length, and boundary-time fractions.
+- `learning_curves.csv`: training fitness and validation capture rates against generation and encounter budget.
+- `summary.json`: group means and paired diverse-minus-fixed difference, with deterministic percentile-bootstrap 95% intervals across training seeds (5,000 resamples). A single run has no interval.
+- `capture_rates.svg`: individual final test capture rates, means, and bootstrap intervals; open in a browser.
+- `timing.json`: wall time for the most recent invocation, including final evaluation and reporting. Resumed invocations do not represent complete-study runtime.
+- Per-condition/seed folders: `checkpoint.json`, `best_predator.json`, `report.json` (including opponent-specific metrics), and `test_encounters.json` containing every test result and scenario.
+
+Time to capture excludes timeouts; absent captures are represented by null/blank. Boundary time means the agent is within 0.1 units of an arena edge. Path length measures actual movement after clamping. Minimum distance includes the starting distance.
+
+The primary endpoint is final held-out capture rate. Inspect opponent-specific results so an aggregate gain does not hide a regression against fleeing prey. Confidence intervals resample independent training runs, not individual encounters; they describe training-seed variability conditional on this particular test suite. A small pilot checks the workflow and is not sufficient evidence of superiority. About 10 or more runs is a starting point, not a guarantee of statistical power.
+
+The learning curves use validation, not test performance, to avoid repeatedly consulting the held-out test suite. Both methods have equal training and validation costs; the CSV records both training-only and total selection encounter counts. Default per condition/seed: 7,200 training + 960 validation + 200 final test encounters.
+
+## Replay and validation
+
+Replay a study champion against its first saved test scenario:
+
+```powershell
+python evolution/replay.py results/quick/diverse-seed-100/best_predator.json
 ```
 
-On systems where `python` is not available, try `python3` or `py`.
+Run unit and actual Godot integration checks:
 
-A successful test prints encounter results with fields such as `captured`, `time`, `predator_fitness`, and `prey_fitness`.
-
-## 5. Train a predator
-
-From the `evolution` directory:
-
-```bash
-python genetic_algorithm.py
+```powershell
+python -m unittest discover -s evolution -p 'test_*.py' -v
 ```
 
-The current genetic algorithm:
+Checks cover seeded scenario generation, elites, reward shaping, known stationary/pursuit trajectories, boundary metrics, identical serial/parallel results, and rejection of malformed genomes.
 
-- Evolves a population of predator neural-network genomes (66 parameters each).
-- Evaluates them against one fixed prey genome.
-- Uses tournament selection, uniform crossover, Gaussian mutation, and elitism.
-- Prints best and average fitness for each generation.
-- Saves the best predator and the training prey to **`best_predator.json`**.
+The original single-encounter training script remains available:
 
-Training settings such as population size, number of generations, and mutation rate are defined near the top of `genetic_algorithm.py`.
-
-**Note:** For replay and generalization testing, the saved JSON should include both `genome` and `prey_genome`, along with `fitness_history`.
-
-## 6. Watch the evolved behavior
-
-After training, run:
-
-```bash
-python replay.py
+```powershell
+python evolution/genetic_algorithm.py
+python evolution/replay.py best_predator.json
 ```
 
-This launches Godot with a visible window and replays the best predator against its training prey. The encounter ends after capture or when the time limit is reached.
+Its historical results used sequential agent updates; retrain rather than directly comparing those old scores to this experiment.
 
-## 7. Test generalization
+## Next extensions
 
-To test the evolved predator against 20 newly generated prey controllers:
-
-```bash
-python test_generalization.py
-```
-
-The script reports the result against the original training prey, the capture rate against random prey, and average encounter duration. This helps distinguish improvement against a specific opponent from broader pursuit ability.
-
-## How fitness works
-
-Each encounter lasts up to **20 simulated seconds**. Capture occurs when the agents come within **1 unit** of each other.
-
-- **Predator:** receives `100 + (20 - capture_time)` on capture, otherwise `0`.
-- **Prey:** receives the number of seconds it survives.
-
-Both agents use fixed-topology neural networks with **5 inputs, 8 hidden units, and 2 movement outputs**. Their movement is learned from genome parameters rather than hardcoded chase/flee rules.
-
-## Troubleshooting
-
-**Godot executable not found:** Check `godot_path` in `evolution/config.json` and confirm the file exists.
-
-**Godot cannot find the project:** Check that `project_path` points to the directory containing `project.godot`.
-
-**`FileNotFoundError: config.json`:** Create `evolution/config.json` from the example configuration.
-
-**Replay cannot load `prey_genome`:** Rerun training with the updated save logic that includes the prey genome.
-
-**Batch evaluation fails:** Open the Godot project in the editor to check for GDScript errors, and inspect the stdout/stderr printed by the Python interface.
-
-**Generated files appear in Git:** Make sure `.gitignore` excludes `evolution/config.json`, Python caches, and Godot's `.godot/` directory. You may also choose to ignore training outputs such as `best_predator.json` and batch input/output JSON files.
-
-## Current limitations
-
-This is an early experimental baseline, not yet a full coevolution system. Training uses a single fixed prey opponent and fixed initial positions, so successful behavior may be specialized to that setup. Planned extensions include training against multiple opponents, randomized starting positions, and evolving predator and prey populations together.
+Once fixed-versus-diverse training has been evaluated, useful follow-ups include coevolution with archived opponents, wall-distance sensors, or testing unseen speed ratios. Introduce one factor at a time and hold evaluation budgets constant. Current limitations include easy/erratic random opponents, no explicit wall sensing, equal speeds, a single arena geometry, and no independent sampling of multiple final test suites.
