@@ -4,3 +4,5 @@
 evolution/config.json
 __pycache__/
 results/
+.DS_STORE
+evolution/.DS_STORE

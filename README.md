@@ -1,5 +1,7 @@
 # Predator–Prey Evolution
 
+**New: quick ecosystem sandbox.** Run `python3 evolution/ecosystem.py` for multiple predators/prey, food, hunger, randomized rocks, limited vision, and home-base respawning. See [ECOSYSTEM.md](ECOSYSTEM.md) for controls and tunable settings. This exploratory demo uses rule controllers; the neural evolution experiments below remain available.
+
 **Current focus: competitive coevolution.** Both predator and prey evolve in an obstacle arena, with archived opponents, generation matchups, and an interactive history viewer. See [COEVOLUTION.md](COEVOLUTION.md) for the prepared demo, training commands, and methods.
 
 ```powershell
