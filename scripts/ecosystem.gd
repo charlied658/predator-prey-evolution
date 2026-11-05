@@ -3,6 +3,10 @@ extends Node3D
 # Exploratory rule controllers share the original swept-circle locomotion.
 const Agent = preload("res://scripts/agent.gd")
 var cfg: Dictionary
+var numeric_mode := false
+var batch_mode := false
+var failed := false
+var last_summary: Dictionary = {}
 var rng := RandomNumberGenerator.new()
 var agents: Array = []
 var foods: Array = []
@@ -29,16 +33,21 @@ func _ready() -> void:
 			path = args[i + 1]
 		if args[i] == "--ecosystem-output" and i + 1 < args.size():
 			output_path = args[i + 1]
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		fail("Cannot open ecosystem config: " + path)
-		return
-	var parsed = JSON.parse_string(file.get_as_text())
-	if not parsed is Dictionary:
-		fail("Ecosystem config must be a JSON object")
-		return
-	cfg = parsed
+	if cfg.is_empty():
+		var file := FileAccess.open(path, FileAccess.READ)
+		if file == null:
+			fail("Cannot open ecosystem config: " + path)
+			return
+		var parsed = JSON.parse_string(file.get_as_text())
+		if not parsed is Dictionary:
+			fail("Ecosystem config must be a JSON object")
+			return
+		cfg = parsed
 	if not validate_config():
+		return
+	numeric_mode = DisplayServer.get_name() == "headless"
+	if numeric_mode:
+		reset_world()
 		return
 	var camera := Camera3D.new()
 	add_child(camera)
@@ -72,6 +81,7 @@ func _ready() -> void:
 	reset_world()
 
 func fail(message: String) -> void:
+	failed = true
 	push_error(message)
 	get_tree().quit(1)
 
@@ -113,9 +123,30 @@ func validate_config() -> bool:
 			if not (coordinate is float or coordinate is int) or not is_finite(float(coordinate)) or absf(coordinate) + cfg.home_radius > 14:
 				fail("Home bases must fit inside the arena")
 				return false
+	var behavior = cfg.get("behavior", {})
+	if not behavior is Dictionary:
+		fail("behavior must be an object")
+		return false
+	for role in behavior:
+		if not role in ["predator", "prey"] or not behavior[role] is Dictionary:
+			fail("behavior must contain predator/prey parameter objects")
+			return false
+		for key in behavior[role]:
+			var value = behavior[role][key]
+			if not key in ["target_weight", "avoid_weight", "wander_weight", "food_threshold"] or not (value is int or value is float):
+				fail("Unknown or nonnumeric behavior parameter: " + str(key))
+				return false
+			if not is_finite(float(value)) or value < 0 or value > (100 if key == "food_threshold" else 6):
+				fail("Behavior parameter out of range: " + str(key))
+				return false
 	return true
 
-func ball(parent: Node3D, pos: Vector3, radius: float, color: Color) -> MeshInstance3D:
+func ball(parent: Node3D, pos: Vector3, radius: float, color: Color) -> Node3D:
+	if numeric_mode:
+		var placeholder := Node3D.new()
+		parent.add_child(placeholder)
+		placeholder.position = pos
+		return placeholder
 	var node := MeshInstance3D.new()
 	var mesh := SphereMesh.new()
 	mesh.radius = radius
@@ -128,7 +159,12 @@ func ball(parent: Node3D, pos: Vector3, radius: float, color: Color) -> MeshInst
 	node.position = pos
 	return node
 
-func box(parent: Node3D, pos: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
+func box(parent: Node3D, pos: Vector3, size: Vector3, color: Color) -> Node3D:
+	if numeric_mode:
+		var placeholder := Node3D.new()
+		parent.add_child(placeholder)
+		placeholder.position = pos
+		return placeholder
 	var node := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = size
@@ -176,11 +212,15 @@ func reset_world() -> void:
 	energy_integral = {"predator": 0.0, "prey": 0.0}
 	living_time = {"predator": 0.0, "prey": 0.0}
 	finished = false
+	last_summary = {}
 	paused = false
 	rng.seed = int(cfg.seed)
-	box(content, Vector3(0, -0.65, 0), Vector3(29, 0.3, 29), Color("35483d"))
+	if not numeric_mode:
+		box(content, Vector3(0, -0.65, 0), Vector3(29, 0.3, 29), Color("35483d"))
 	for role in ["predator", "prey"]:
 		var home := home_position(role)
+		if numeric_mode:
+			continue
 		var disc := MeshInstance3D.new()
 		var cylinder := CylinderMesh.new()
 		cylinder.top_radius = cfg.home_radius
@@ -216,7 +256,6 @@ func reset_world() -> void:
 		for index in range(int(cfg["predators" if role == "predator" else "prey"])):
 			var body = Agent.new()
 			content.add_child(body)
-			body.sensor_mode = "ecology"
 			body.obstacles = rocks
 			ball(body, Vector3.ZERO, 0.5, Color("ed665e") if role == "predator" else Color("65d6ae"))
 			var nose := ball(body, Vector3(0.45, 0.2, 0), 0.14, Color.WHITE)
@@ -258,12 +297,13 @@ func sees(agent: Dictionary, pos: Vector3) -> bool:
 	return unobstructed(agent.body.position, pos)
 
 func desired_direction(agent: Dictionary, delta: float) -> Vector3:
+	var behavior: Dictionary = cfg.get("behavior", {}).get(agent.role, {})
 	var pos: Vector3 = agent.body.position
 	agent.wander_timer -= delta
 	if agent.wander_timer <= 0:
 		agent.wander = agent.heading + rng.randf_range(-1.4, 1.4)
 		agent.wander_timer = rng.randf_range(0.7, 2.0)
-	var desired := Vector3(cos(agent.wander), 0, sin(agent.wander)) * 0.5
+	var desired := Vector3(cos(agent.wander), 0, sin(agent.wander)) * float(behavior.get("wander_weight", 0.5))
 	var nearest: Dictionary = {}
 	var distance := INF
 	for other in agents:
@@ -276,8 +316,10 @@ func desired_direction(agent: Dictionary, delta: float) -> Vector3:
 	if not nearest.is_empty():
 		desired = (nearest.body.position - pos).normalized()
 		if agent.role == "prey":
-			desired = -desired * 2.5
-	elif agent.role == "prey" and agent.energy < 85:
+			desired = -desired * float(behavior.get("target_weight", 2.5))
+		else:
+			desired *= float(behavior.get("target_weight", 1.0))
+	elif agent.role == "prey" and agent.energy < float(behavior.get("food_threshold", 85)):
 		var food_distance := INF
 		for food in foods:
 			var d := pos.distance_to(food.pos)
@@ -297,7 +339,7 @@ func desired_direction(agent: Dictionary, delta: float) -> Vector3:
 		var offset: Vector3 = pos - other.body.position
 		if offset.length() < 1.2:
 			avoid += offset.normalized() * (1.2 - offset.length())
-	return (desired + avoid * 1.8).normalized()
+	return (desired + avoid * float(behavior.get("avoid_weight", 1.8))).normalized()
 
 func deactivate(agent: Dictionary) -> void:
 	agent.cooldown = float(cfg.respawn_delay)
@@ -390,16 +432,23 @@ func finish() -> void:
 			fail("Cannot write summary: " + output_path)
 			return
 		file.store_string(JSON.stringify(summary, "  ") + "\n")
+	last_summary = summary
+	if batch_mode:
+		return
 	print(JSON.stringify(summary))
 	if DisplayServer.get_name() == "headless":
 		get_tree().quit()
 
 func update_hud() -> void:
+	if numeric_mode:
+		return
 	var counts := {"predator": 0, "prey": 0}
 	for agent in agents:
 		if agent.cooldown <= 0:
 			counts[agent.role] += 1
 	hud.text = "ECOSYSTEM LAB | seed %d | %.1f / %.0fs | %dx\nRed predators %d/%d | Green prey %d/%d\nCaptures %d | Pellets eaten %d | Starved P/Q %d/%d\nYellow bars: energy | White dots: facing | Colored discs: spawn bases\nSpace pause | R repeat seed | N next seed | 1/2/4 speed | Esc quit\nRule controllers: hunt / evade / forage. Bases are spawn points, not safe zones." % [int(cfg.seed), elapsed, cfg.duration, int(time_scale), counts.predator, cfg.predators, counts.prey, cfg.prey, captures, meals, starvations.predator, starvations.prey]
+	if cfg.has("evolution_label"):
+		hud.text += "\n" + str(cfg.evolution_label)
 	if finished:
 		hud.text += "\nFINISHED — R to repeat, N for a new world"
 	elif paused:
