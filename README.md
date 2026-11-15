@@ -26,6 +26,100 @@ Set the absolute paths to the Godot executable and this repository. For macOS:
 
 The local configuration and generated `results/` are ignored by Git.
 
+## Co-evolution experiments
+
+### Bit-string co-evolution
+
+This standalone experiment compares fixed, current, and archived opponents in
+a mathematical game. It runs in Python without Godot. From PowerShell:
+
+```powershell
+& .\.venv\Scripts\python.exe -u evolution/coevolve_bits.py --output results/coevolve-bits
+```
+
+Each side mutates an 8-bit genome by flipping one bit per offspring. The payoff
+blends lookup tables for each genome with tables that read bits from both sides.
+The same 20 seeded landscapes are tested at two interaction weights, 0.2 and
+0.8. All three methods start from the same genomes and get 2,560 training
+matchups per run. In generation one, all methods use the same panel. The archive
+method fills missing historical slots with current opponents until two earlier
+checkpoints from training are available.
+
+Every five generations, the runner scores each champion against all 256 possible
+opponents. The pure best-response gap is the best payoff A could obtain against
+the current B minus the worst payoff A could receive against any B. Smaller
+values indicate a more robust pair of pure strategies. A game whose equilibrium
+requires a mixture can still have a positive gap for every pure pair.
+
+`progress.png` shows the mean gap over time. `historical_matchups.png` shows
+cross-generation payoffs on the first landscape for each condition. CSV files
+store the measurements for every landscape, and `summary.json` reports the
+paired archive-versus-current comparison. Use `--no-plots` to run with only the
+Python standard library, or `--repeats 2 --generations 10` for a quick preview.
+
+### Symmetry breaking
+
+The symmetry experiment starts A and B with identical populations and gives
+them independent mutation and opponent sampling. Swapping the genomes reverses
+the payoff exactly. Both sides train against current opponents.
+
+```powershell
+& .\.venv\Scripts\python.exe -u evolution/coevolve_symmetry.py
+```
+
+The default is 20 paired landscapes and 60 generations at each interaction
+strength. The runner saves `symmetry.png` for the first landscape and
+`history.csv` and `summary.json` for all runs. It tracks genome differences,
+differences in payoff against the same full set of opponents, and who wins the
+current head-to-head matchup. A reversal counts when the next non-tied winner
+is the other side. A tie ends an unbroken lead.
+
+### Symmetric food competition
+
+Run two initially identical populations, with one agent per lineage in
+each episode. They compete for 28 scattered pellets among 14 circular rocks.
+Each pellet can be collected once. Contact has no scoring effect. Episodes
+end at the time limit.
+
+```powershell
+& .\.venv\Scripts\python.exe -u evolution/coevolve_foraging.py
+```
+
+A 70-weight neural controller maps local observations and a two-channel clock
+to steering and joint bend. The clock supplies timing information. Only actual
+tail motion generates thrust, and drag slows the body between strokes.
+Steering becomes more effective as the body gains speed. This is a simplified
+thrust and drag model.
+
+Four body genes set front and rear segment length, their width
+ratio, and the bend limit. Both segments collide with terrain. The sum of
+their capsule areas before overlap is fixed, and only the head collects
+pellets. Both lineages start with the same body proportions.
+Each lineage selects by its pellet count minus its opponent's, then makes
+mutated copies of its champion. Candidate pairs play from both starting
+positions. Every generation, the champions also play each other on a held-out
+map and forage individually from both starts on two held-out maps.
+
+The main Godot scene launches the populated ecosystem. The visual launcher
+opens the appropriate scene when given a saved experiment configuration.
+
+`specialization.png` shows pellet counts in direct matchups and solo tests,
+plus movement speed and path turning in the solo tests. `history.csv` records
+each trial, and `genome_history.json` tracks divergence between the champions'
+weights. Look for behavioral differences that persist across generations
+and matched conditions. This measures champion behavior, while reproduction
+between the lineages is outside the experiment. The default uses one
+optimizer seed. Use `--seed` and a new output directory for independent runs.
+The final body-swap test runs both controllers in both bodies under matched
+solo conditions. See `body_swap.csv` and the four `controller-*-body-*.json`
+replay configurations.
+
+Replay a matchup or its swapped-start counterpart:
+
+```powershell
+& .\.venv\Scripts\python.exe evolution/ecosystem.py --config results/coevolve-swimming/generation-006.json
+```
+
 ## Numeric experiments (main workflow)
 
 Compare mutation-only evolution, a genetic algorithm with crossover, and

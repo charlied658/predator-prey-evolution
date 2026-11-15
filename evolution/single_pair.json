@@ -1,0 +1,28 @@
+{
+  "seed": 42,
+  "duration": 60,
+  "predators": 1,
+  "prey": 1,
+  "terrain_formations": 3,
+  "food_pellets": 24,
+  "food_clusters": 3,
+  "food_cluster_radius": 1.8,
+  "food_regrowth": 20,
+  "predator_speed": 4.2,
+  "prey_speed": 3.7,
+  "predator_acceleration": 5,
+  "prey_acceleration": 8,
+  "predator_turn_degrees": 150,
+  "prey_turn_degrees": 240,
+  "predator_vision": 40,
+  "prey_vision": 40,
+  "predator_home": [
+    -11,
+    0
+  ],
+  "prey_home": [
+    11,
+    0
+  ],
+  "home_radius": 1
+}

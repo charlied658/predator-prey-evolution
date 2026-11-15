@@ -21,22 +21,28 @@ func run_jobs() -> void:
 		if not job is Dictionary:
 			stop("Each episode must be a settings object")
 			return
-	var world = load("res://ecosystem.tscn").instantiate()
-	world.batch_mode = true
-	world.cfg = jobs[0]
-	root.add_child(world)
-	world.set_physics_process(false)
-	if world.failed:
-		return
+	var world = null
+	var scene_path := ""
 	var rows: Array = []
-	for index in range(jobs.size()):
-		if index > 0:
-			world.cfg = jobs[index]
+	for job in jobs:
+		var single_pair: bool = job.get("mode") in ["foraging_duel", "food_competition"] or job.has("terrain_formations")
+		var next_scene := "res://single_pair.tscn" if single_pair else "res://ecosystem.tscn"
+		if next_scene != scene_path:
+			if world != null:
+				world.free()
+			scene_path = next_scene
+			world = load(scene_path).instantiate()
+			world.batch_mode = true
+			world.cfg = job
+			root.add_child(world)
+			world.set_physics_process(false)
+		else:
+			world.cfg = job
 			if not world.validate_config():
 				return
 			world.reset_world()
-			if world.failed:
-				return
+		if world.failed:
+			return
 		for frame in range(int(ceil(float(world.cfg.duration) * 60)) + 1):
 			world.step(1.0 / 60)
 			if world.finished:
