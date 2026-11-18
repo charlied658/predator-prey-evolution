@@ -1,0 +1,20 @@
+{
+  "predator_vision": 24.0,
+  "prey_vision": 36.0,
+  "avoidance_margin": 3.0,
+  "avoidance_hysteresis": 3.0,
+  "avoidance_minimum_throttle": 0.8,
+  "speed": 18.0,
+  "predator_rule": "Pursue the prey while within predator vision; otherwise explore using the predator's own visited map. Local stuck recovery may briefly interrupt pursuit.",
+  "prey_rule": "Avoidance has highest priority. When a visible predator is within predator_vision + avoidance_margin, evade until separation reaches that threshold plus avoidance_hysteresis. Otherwise pursue visible food, then explore. Thus the predator may remain inside prey vision without triggering continuous flight.",
+  "defaults_in_cells": "Predator sees 24; prey sees 36. Prey start evading at 27 and stop at 30. Both maximum speeds are 18 cells/s. There are 12 cells per world unit.",
+  "avoidance_motion": "Select a locally collision-clear waypoint prioritising separation from the visible predator; constrain intended evasion velocity to point away or sideways and use at least 80% throttle. Escape is attempted, not guaranteed after terrain collisions.",
+  "recovery_rule": "Both organisms retain the two-second stuck rule and local escape waypoints. Prey recovery cannot override threat avoidance or cool down a predator. A newly dangerous predator interrupts non-avoidance recovery immediately.",
+  "memory": "Separate visited maps, exploration targets and recovery/cooldown state per organism per encounter. No information about unseen opponents or unseen food is passed to either controller.",
+  "capture": "Body contact ends the encounter; no respawn. Continuous capture follows collision-resolved piecewise movement paths. Capture takes precedence over pellet pickup during the capture timestep.",
+  "vision_occlusion": true,
+  "evolved": "Separate 170-weight feedforward networks control steering offset and throttle under these programmed priorities. No role, vision, speed, target rule, memory map or recovery instruction evolves.",
+  "pathfinding": true,
+  "navigation": "Shortest routes on four-neighbour body-clear terrain sites, cached reverse distance fields, and collision-clear waypoint smoothing. Both roles know static terrain but not unseen food/opponents. NN steering is redirected toward the route waypoint if its next step would hit terrain. Avoidance remains a local separation-first escape rule.",
+  "vision": "Point line of sight to organism/pellet centres within the role vision radius. Solid terrain blocks detection. No last-seen opponent tracking. Vision outlines in replays are approximate 64-ray contours; sensor tests use exact segment collision."
+}

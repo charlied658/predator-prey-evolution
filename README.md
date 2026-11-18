@@ -580,3 +580,204 @@ Coverage percentages use reachable grid tiles; raw visited counts include the
 starting tile. The benchmark is conditional on this single map. Encounter CSV,
 seed-average trajectories and compressed per-encounter curves are saved so plots
 can be changed without rerunning simulation.
+
+### Hybrid predator/prey pursuit
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/hybrid_pursuit.py --generations 12 --seeds 3 --training-starts 4 --seconds 20 --predator-vision 24 --prey-vision 36 --output results/hybrid-pursuit-pilot
+```
+
+This restores one predator and one prey on complex terrain. Predator priorities
+are visible prey, then unexplored territory. Prey priorities are avoidance,
+visible pellets, then unexplored territory. Each has a separate visited map.
+Prey evade at separation 27 cells and resume foraging at 30 cells, while still
+seeing the predator out to 36 cells. This buffer attempts to keep them outside
+predator vision (24 cells). Terrain does not obscure vision in this experiment.
+
+Rules are in evolution/hybrid_pursuit_instructions.json. Stuck recovery remains
+active but cannot override prey avoidance. Both maximum speeds are 18 cells/s.
+Capture follows collision-resolved movement and ends the encounter without
+respawning. Prey fitness combines survival and pellets; predator fitness rewards
+capture, faster capture and proximity. Saved design.json has the exact equations.
+
+Separate 170-weight movement networks evolve in two populations of four, against
+all current opponents on fresh shared training starts. Priorities, target selection,
+vision and recovery are programmed, not evolved. Progress prints every generation.
+Outputs include outcomes.png (mean and 95% confidence bands across seeds), raw
+measurements, saved controllers, and replay.gif showing vision, goals, visited
+prey tiles and modes. Replays last 60 seconds on three predetermined starts;
+training encounters last 20 seconds. Current-opponent curves describe a changing
+matchup, not absolute improvement. Three seeds are a pilot, not strong evidence
+of an arms race. Use a new output folder for each run; --arena empty removes terrain.
+
+Terrain routing and occlusion are now enabled by default in hybrid_pursuit.py.
+Routing uses shortest paths on a four-neighbour graph of body-clear cell centres,
+then smooths the path to a directly reachable waypoint. If NN steering would hit
+terrain on its next step, the route direction overrides that turn. Local prey
+escape remains separation-first; this is not a global adversarial escape planner.
+Both roles know the static terrain map. They do not know hidden pellet/opponent
+locations, and do not track last-seen opponents. Point line of sight to a target's
+centre determines visibility; solid terrain blocks both opponent and food sensing.
+
+Replays show approximate 64-ray clipped vision outlines and route waypoints.
+Actual visibility uses individual segment collision tests, not that outline.
+The existing inside_predator_vision measurement now means time actually detected,
+including occlusion, so it is not directly comparable with old radius-only runs.
+Use --no-pathfinding and/or --no-occlusion for comparisons. For a fresh run:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/hybrid_pursuit.py --generations 12 --seeds 3 --training-starts 4 --seconds 20 --output results/hybrid-navigation-pilot
+```
+
+Navigation performance: boolean route/vision checks now vectorize occupied-cell
+geometry instead of calculating unused collision normals. Equal-cost route fields
+use layered breadth-first search with the original node-index tie breaking.
+Movement collision sweeps use Python scalar arithmetic in their inner loop.
+A local paired benchmark of eight 20-second encounters (two repeats) took
+24.74-25.05 seconds before versus 2.36-2.50 seconds after, about 10x faster.
+Metrics and the complete first encounter trace matched exactly. Timings are in
+results/navigation-optimization/timings.json; performance varies with encounters.
+Training and benchmark phases now print intermediate progress every five seconds
+of simulated time. Existing running Python processes need a restart to use edits;
+choose a fresh output directory when starting the optimized trial.
+
+Historical matchups for a completed hybrid pursuit run (no retraining):
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/historical_pursuit.py results/hybrid-navigation-optimized --starts 8
+```
+
+Evaluates all saved predator/prey checkpoint combinations on identical starts
+within each seed. Same-generation results reuse the existing measurements.
+The historical subfolder contains matchups.csv, summary.json and
+historical-matchups.png: a capture heatmap plus trajectories against fixed
+initial/final opponents. Confidence bands resample controller seeds, not individual
+starts. This measures co-evolved controllers against fixed evaluation opponents;
+it is not a comparison of fixed-opponent training versus co-evolution training.
+Replot saved results without simulating using the same command with --plot-only.
+
+Continuous multi-prey mode (the original single-life mode remains the default):
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/hybrid_pursuit.py --respawn --prey-count 3 --memory-half-life 30 --generations 6 --seeds 2 --training-starts 2 --test-starts 8 --seconds 60 --output results/continuous-pursuit-pilot
+```
+
+One predator targets its nearest visible prey. All three prey share the selected
+prey genome, but have private visits, targets and recovery state; prey bodies now
+collide with one another and have independent seeded target choices. Both populations still evolve steering/throttle.
+The fixed-duration encounter continues after captures. A captured prey waits one
+second, then respawns at a random terrain-clear location outside the predator's
+vision radius. Food respawns after one second outside ALL active prey vision
+radii. These are strict radial exclusions even behind walls. All placements avoid
+body overlap and food stays six cells apart. Failed placements wait and retry;
+constraints are never relaxed. The initial food and prey placements use the same
+exclusions, so some food/prey slots may initially be pending on crowded maps.
+
+Visit confidence halves every --memory-half-life seconds (default 30), refreshed
+by occupying the tile. Below 0.5 it becomes unvisited for exploration planning.
+Terrain knowledge never decays. Respawning individuals get fresh visit memory.
+The replay shows one encounter, all organisms/vision/targets, and a fading green
+memory grid for prey 1; full JSON for three encounters includes respawn/capture
+events. The plotted tile counts measure recently visited tiles, not total coverage.
+
+New metrics deliberately differ from the old experiment: captures is a count;
+food_per_prey is total collected divided by prey count across the fixed trial;
+alive_fraction is active prey-seconds divided by possible prey-seconds. Predator
+fitness is captures plus a small time-averaged proximity term; prey fitness is
+alive_fraction - captures/prey_count + 0.25*food_per_prey. Shared pellets are
+awarded once to the earliest eligible swept pickup, with prey-index tie breaking.
+Captured prey do not pick up food in the capture timestep. Saved design.json
+contains the complete specification. Historical single-life analysis rejects
+continuous runs because the metrics and fitness differ.
+
+Timing on the local machine: four 60-second continuous encounters with three
+prey took 14.1 seconds (simulation only). The six-generation/two-seed command
+above is approximately 25-40 minutes including evaluations and replay generation;
+this is a timing estimate, not a guaranteed bound. Respawning prevents early
+termination and multiple prey add work, so single-life timings do not carry over.
+
+Continuous mode now enables prey-prey body collisions and independent random
+target choices by default. Swept circle contacts prevent tunnelling, preserve
+terrain clearance and apply equal-mass inelastic sliding. Captured bodies are
+removed at contact. Pellet pickup uses the actual piecewise collision paths.
+Dense jams stop movement rather than teleporting or allowing overlap.
+
+Randomness chooses targets, not per-frame movement noise: each prey has its own
+stream keyed by encounter seed and individual index, separate from spawn RNG.
+Choose among the three closest visible eligible pellets with distance weighting;
+retain the choice for up to three seconds unless invalidated. For exploration,
+choose among five nearby eligible unvisited tiles, retaining the target until
+reached or interrupted; use oldest tiles if all have been visited. Avoidance
+still overrides foraging/exploration. These choices are programmed, not evolved.
+They do not coordinate assignments or guarantee distinct targets when options
+are limited. Respawn resets target commitments and memory. NN genes are shared.
+
+The existing command enables both features; use a fresh output directory, e.g.
+results/continuous-prey-interactions. Optional --no-prey-collisions and
+--no-random-targets flags disable each feature independently for comparison.
+Older saved rule snapshots without these flags retain their previous behavior.
+
+With both features enabled, a local four-encounter batch of 60-second trials took
+19.2 seconds; an encounter reproduced exactly when rerun alone instead of in the
+batch. Budget roughly 30-50 minutes for the six-generation/two-seed pilot above,
+depending on interactions. Replays were audited for separation, and collision,
+target choice, terrain, and seed reproducibility checks pass.
+
+### Live interactive viewer
+
+```powershell
+.\.venv\Scripts\python.exe evolution/pursuit_viewer.py
+```
+
+Opens a native desktop window using the latest compatible saved hybrid pursuit
+controllers. To choose a particular run or begin paused:
+
+```powershell
+.\.venv\Scripts\python.exe evolution/pursuit_viewer.py results/prey-interactions-validation --paused
+```
+
+Use the terrain selector for the training map, empty arena, or exported landscape
+presets; Load map JSON accepts other 96 x 96 terrain masks. Changing maps restarts
+the encounter using the selected controllers and seed, without retraining.
+Restart repeats that seed; New encounter increments it. Choose controller seeds
+and saved generations independently. Prey count and duration apply on restart.
+Earlier single-life controllers can be evaluated in this continuous sandbox;
+the displayed rules indicate its actual configuration, not the original task.
+
+Pause, single-step, and playback speed operate on the actual simulation generator,
+not a separate animation model or precomputed video. Space toggles play/pause;
+Right Arrow steps when not typing in a field. Display switches control vision,
+route waypoints, final targets, grid, visit memory, trails, food and labels. They
+never change physics or vision detection. Select memory/trail focus from the list
+or click an organism. The focused body has a white outline. Trails break at
+respawns instead of drawing teleportation lines. No experiment data is modified.
+The desktop viewer uses tkinter (bundled with standard Windows Python) and the
+existing numpy/Pillow dependencies. Closing its window stops the local viewer.
+
+Viewer controls are now split into Run, Map & food, and Overlays tabs. In Overlays,
+select Predator, an individual prey, All prey, or All organisms. Each organism
+remembers its own vision, waypoint, final-target, memory, trail and label settings.
+Group edits apply to all members; a dash means their current values differ.
+Only prey 1's vision/waypoints/memory are shown initially. Grid lines and food
+remain global display settings. Clicking an organism changes the edit focus.
+
+Map & food can generate seeded Outcrops, Ridges or Clearings directly in Python,
+without a Godot subprocess. Openness sets the requested free-cell fraction;
+roughness adds smaller-scale variations; feature size controls the obstacle scale.
+Disconnected free pockets are filled, so actual openness can be lower than the
+request. The panel reports actual openness and the number of body-accessible
+cells in the largest region used by the simulation. Generate repeats a map seed;
+New map seed increments it. Save map exports the selected mask and generation
+parameters for reuse, including with training's --terrain-map option. Generating
+or loading a map restarts the encounter; the controller does not retrain.
+
+Soft distance bias replaces the food vision-radius cutoff for new continuous
+training runs and interactive evaluations (unless Strict is explicitly selected).
+Each legal site has weight 0.05 + 0.95*(1-exp(-0.5*(d/scale)^2)), where d is distance
+to the nearest active prey. Sampling normalizes these weights across legal sites.
+The default scale is 12 cells; body/terrain clearance and six-cell food spacing
+still apply. Sites inside prey vision are eligible. Change the distance scale
+and apply/restart in the Map & food tab. Headless controls are --food-spawn-mode
+soft|strict and --food-spawn-scale 12. Earlier saved rule snapshots without a
+food_spawn_mode still use strict placement when evaluated directly by the engine,
+so existing data remain reproducible. The viewer shows its actual food mode.

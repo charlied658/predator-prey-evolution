@@ -30,6 +30,9 @@ class GridCollider:
         return True
 
     def sweep(self, start, motion):
+        # Python scalar arithmetic is much cheaper inside this tight geometry loop.
+        start = (float(start[0]), float(start[1]))
+        motion = (float(motion[0]), float(motion[1]))
         r, n = self.radius, self.size
         end = (start[0]+motion[0], start[1]+motion[1])
         best, normal = 1.0, None
@@ -72,12 +75,14 @@ class GridCollider:
                         accept(t, nx/length, ny/length)
         return best, normal
 
-    def move(self, position, displacement):
+    def move(self, position, displacement, path=None):
         if not self.clear(position):
             raise ValueError('Body starts overlapping terrain')
         current = tuple(position)
         remaining = tuple(displacement)
         contacts = 0
+        elapsed, time_left = 0., 1.
+        if path is not None:path.append((0.,current))
         for _ in range(6):
             distance = math.hypot(*remaining)
             if distance < 1e-9:
@@ -85,6 +90,11 @@ class GridCollider:
             fraction, normal = self.sweep(current, remaining)
             travel = fraction if normal is None else max(0, fraction-1e-6/distance)
             current = (current[0]+remaining[0]*travel, current[1]+remaining[1]*travel)
+            sample_time=elapsed+time_left*fraction
+            if path is not None:
+                if sample_time>path[-1][0]+1e-12:path.append((sample_time,current))
+                else:path[-1]=(sample_time,current)
+            elapsed=sample_time;time_left*=1-fraction
             if normal is None:
                 break
             contacts += 1
@@ -93,4 +103,5 @@ class GridCollider:
             remaining = (residual[0]-inward*normal[0], residual[1]-inward*normal[1])
         if not self.clear(current):
             raise RuntimeError('Collision solver left a body inside terrain')
+        if path is not None and path[-1][0]<1:path.append((1.,current))
         return current, contacts

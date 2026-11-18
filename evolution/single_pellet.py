@@ -60,11 +60,11 @@ def hybrid_exploration_sites(world,grid_cells=8):
     return centres,eligible
 
 
-def hybrid_target(position,pellets,available,visited,last_visit,exploration_target,grid_cells=8,exploration_sites=None,blocked_tiles=None):
+def hybrid_target(position,pellets,available,visited,last_visit,exploration_target,grid_cells=8,exploration_sites=None,blocked_tiles=None,food_vision=24):
     """Programmed priorities; only visible food may influence target choice."""
     count=len(position);rows=np.arange(count)
     delta=pellets-position[:,None,:];distance=np.linalg.norm(delta,axis=-1)
-    visible=available & (distance<=24)
+    visible=available & (distance<=food_vision)
     food_index=np.where(visible,distance,np.inf).argmin(axis=1);foraging=visible.any(axis=1)
     centres=np.array([((x+.5)*96/grid_cells,(y+.5)*96/grid_cells) for y in range(grid_cells) for x in range(grid_cells)])
     eligible=np.ones(grid_cells**2,bool)
