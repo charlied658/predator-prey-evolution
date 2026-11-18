@@ -106,14 +106,14 @@ def starts(ids,sites):
         result.append([a,choices[rng.integers(len(choices))]])
     return np.array(result)
 
-def training_ids(seed, generation, mode='resampled'):
+def training_ids(seed, generation, mode='resampled', count=2):
     """Share encounters across candidates; reserve 5000+ for evaluation."""
     if mode == 'fixed' or generation <= 1:
-        return np.arange(2) + seed * 100
-    return np.arange(2) + 1000000 + (generation - 2) * 1000 + seed * 10
+        return np.arange(count) + seed * 100
+    return np.arange(count) + 1000000 + (generation - 2) * 1000 + seed * 10
 
 
-def episodes(a,b,ids,ranges,world,trace=None,capture=True,mask_food=False,food_encoding="original"):
+def episodes(a,b,ids,ranges,world,trace=None,capture=True,mask_food=False,food_encoding="original",mask_prey_opponent=False):
     collider,sites,rays=world; pos=starts(ids,sites); velocity=np.zeros_like(pos)
     pellets=food_layout(ids,sites,pos);available=np.ones((len(a),PELLET_COUNT),bool);food=np.zeros(len(a))
     n=len(a); active=np.ones(n,bool);caught=np.zeros(n,bool);end=np.full(n,STEPS*DT)
@@ -123,6 +123,9 @@ def episodes(a,b,ids,ranges,world,trace=None,capture=True,mask_food=False,food_e
         if not capture:
             for inputs in obs:inputs[:,:5]=0
             seen[:]=False
+        if mask_prey_opponent:
+            obs[1][:,:5]=0
+            seen[:,1]=False
         if mask_food:obs[1][:,-3:]=0
         sightings+=seen*active[:,None]
         if trace is not None: trace.append({'positions':pos[0].tolist(),'visible':seen[0].tolist(),'caught':bool(caught[0]),'pellets':pellets[0,available[0]].tolist(),'food':int(food[0])})
@@ -283,8 +286,19 @@ def factor_test(args):
     (out/'design.json').write_text(json.dumps(design,indent=2));print(json.dumps(summary),flush=True)
 
 
+def seed_mean_interval(values, draws=10000):
+    """Pointwise percentile bootstrap over complete independent seed trajectories."""
+    values=np.asarray(values,dtype=float)
+    if values.ndim!=2 or len(values)<1 or not np.isfinite(values).all():
+        raise ValueError('Expected finite seed-by-checkpoint measurements')
+    indices=np.random.default_rng(290619).integers(0,len(values),size=(draws,len(values)))
+    boot=values[indices].mean(axis=1)
+    low,high=np.percentile(boot,[2.5,97.5],axis=0)
+    return values.mean(axis=0),low,high
+
+
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,default=Path('results/vision-pilot'));p.add_argument('--generations',type=int,default=12);p.add_argument('--seeds',type=int,default=3);p.add_argument('--eval-every',type=int,default=10);p.add_argument('--training-mode',choices=('fixed','resampled'),default='resampled');p.add_argument('--foraging-population-test',action='store_true');p.add_argument('--foraging-factor-test',action='store_true');p.add_argument('--arena',choices=('terrain','empty'),default='terrain');p.add_argument('--food-encoding',choices=('original','unit'),default='original');args=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,default=Path('results/vision-pilot'));p.add_argument('--generations',type=int,default=12);p.add_argument('--seeds',type=int,default=3);p.add_argument('--eval-every',type=int,default=10);p.add_argument('--training-mode',choices=('fixed','resampled'),default='resampled');p.add_argument('--foraging-population-test',action='store_true');p.add_argument('--foraging-factor-test',action='store_true');p.add_argument('--arena',choices=('terrain','empty'),default='terrain');p.add_argument('--food-encoding',choices=('original','unit'),default='original');p.add_argument('--training-starts',type=int,default=2,choices=range(1,9));p.add_argument('--conditions',nargs='+',choices=tuple(CONDITIONS),default=list(CONDITIONS));p.add_argument('--opponent-mode',choices=('coevolution','fixed'),default='coevolution');p.add_argument('--seed-offset',type=int,default=0);args=p.parse_args()
     if min(args.generations,args.seeds,args.eval_every)<1:p.error('Generations, seeds and evaluation interval must be positive')
     if args.foraging_factor_test:
         factor_test(args)
@@ -303,18 +317,30 @@ def main():
     pos=np.array([[[10.,10.],[80.,80.]]]);vel=np.zeros_like(pos)
     one,_=observe(pos,vel,(24,24),world[2]);pos[0,1]=[85,85];vel[0,1]=[5,3]
     two,_=observe(pos,vel,(24,24),world[2]);assert np.array_equal(one[0],two[0]),'Opponent information leak'
+    conditions={name:CONDITIONS[name] for name in dict.fromkeys(args.conditions)}
     rows=[]; champions={};history={};replays=[{} for _ in range(2)]
-    for name,ranges in CONDITIONS.items():
+    for name,ranges in conditions.items():
         for seed in range(args.seeds):
-            rng=np.random.default_rng(710+seed);initial=rng.normal(0,.45,(4,GENES));pops=[initial.copy(),initial.copy()]
-            streams=[np.random.default_rng(1200+seed*2+s) for s in range(2)]
+            effective_seed=seed+args.seed_offset
+            rng=np.random.default_rng(710+effective_seed);initial=rng.normal(0,.45,(4,GENES));pops=[initial.copy(),initial.copy()]
+            streams=[np.random.default_rng(1200+effective_seed*2+s) for s in range(2)]
             champ=[initial[0].copy(),initial[0].copy()]
             for generation in range(args.generations+1):
                 if generation:
-                    a=np.repeat(pops[0],8,axis=0);b=np.tile(np.repeat(pops[1],2,axis=0),(4,1))
-                    encounter_ids=training_ids(seed,generation,args.training_mode)
-                    v=episodes(a,b,np.tile(encounter_ids,16),ranges,world,food_encoding=args.food_encoding).reshape(4,4,2,7)
-                    scores=[v[:,:,:,0].mean(axis=(1,2)),v[:,:,:,1].mean(axis=(0,2))]
+                    encounter_ids=training_ids(effective_seed,generation,args.training_mode,args.training_starts)
+                    if args.opponent_mode == 'fixed':
+                        # Evolve each role against its frozen generation-zero
+                        # opponent. Identical deterministic repeats are omitted.
+                        count=4*args.training_starts
+                        frozen=np.repeat(initial[0][None],count,axis=0)
+                        evolving=[np.repeat(pop,args.training_starts,axis=0) for pop in pops]
+                        predator=episodes(evolving[0],frozen,np.tile(encounter_ids,4),ranges,world,food_encoding=args.food_encoding).reshape(4,args.training_starts,7)
+                        prey=episodes(frozen,evolving[1],np.tile(encounter_ids,4),ranges,world,food_encoding=args.food_encoding).reshape(4,args.training_starts,7)
+                        scores=[predator[:,:,0].mean(axis=1),prey[:,:,1].mean(axis=1)]
+                    else:
+                        a=np.repeat(pops[0],4*args.training_starts,axis=0);b=np.tile(np.repeat(pops[1],args.training_starts,axis=0),(4,1))
+                        v=episodes(a,b,np.tile(encounter_ids,16),ranges,world,food_encoding=args.food_encoding).reshape(4,4,args.training_starts,7)
+                        scores=[v[:,:,:,0].mean(axis=(1,2)),v[:,:,:,1].mean(axis=(0,2))]
                     champ=[pop[s.argmax()].copy() for pop,s in zip(pops,scores)]
                     pops=[]
                     for g,r in zip(champ,streams):
@@ -325,7 +351,7 @@ def main():
                 if generation % args.eval_every == 0 or generation == args.generations:
                     history[f'{name}/{seed}/{generation}']=[g.tolist() for g in champ]
                     (args.output/'history.json').write_text(json.dumps(history))
-                    ids=np.arange(12)+5000+seed*100
+                    ids=np.arange(12)+5000+effective_seed*100
                     v=episodes(np.repeat(champ[0][None],12,axis=0),np.repeat(champ[1][None],12,axis=0),ids,ranges,world,food_encoding=args.food_encoding)
                     for trial,row in enumerate(v):rows.append(dict(condition=name,seed=seed,generation=generation,start=int(ids[trial]),capture=float(row[2]),duration=float(row[3]),predator_visibility=float(row[4]),prey_visibility=float(row[5]),food=float(row[6])))
                     with (args.output/'measurements.csv').open('w',newline='') as f:
@@ -335,20 +361,23 @@ def main():
             champions[f'{name}/{seed}']=[g.tolist() for g in champ]
             if seed==0:
                 for i in range(2):
-                    trace=[];episodes(champ[0][None],champ[1][None],[5000+i],ranges,world,trace,food_encoding=args.food_encoding);replays[i][name]=trace
+                    trace=[];episodes(champ[0][None],champ[1][None],[5000+args.seed_offset*100+i],ranges,world,trace,food_encoding=args.food_encoding);replays[i][name]=trace
     with (args.output/'measurements.csv').open('w',newline='') as f:
         w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
     (args.output/'champions.json').write_text(json.dumps(champions))
     for i,replay in enumerate(replays):
         render(data,replay,args.output,i);(args.output/f'replay-{i}.json').write_text(json.dumps(replay))
     fig,axes=plt.subplots(1,3,figsize=(14,4),layout='constrained')
-    for name in CONDITIONS:
+    for name in conditions:
         for ax,key in zip(axes,['capture','duration','food']):
+            values=[]
             for seed in range(args.seeds):
-                subset=[r for r in rows if r['condition']==name and r['seed']==seed];gs=sorted(set(r['generation'] for r in subset));ys=[np.mean([r[key] for r in subset if r['generation']==g]) for g in gs]
-                ax.plot(gs,ys,'o-',alpha=.65,label=name if seed==0 else None,color=list(plt.rcParams['axes.prop_cycle'].by_key()['color'])[list(CONDITIONS).index(name)])
-    axes[0].set(title='Capture fraction: one line per evolutionary seed',xlabel='Generation',ylabel='Fraction',ylim=(-.03,1.03));axes[1].set(title='Episode duration (10s = survived)',xlabel='Generation',ylabel='Seconds');axes[2].set(title='Pellets collected by prey',xlabel='Generation',ylabel='Pellets',ylim=(0,PELLET_COUNT));axes[0].legend();fig.savefig(args.output/'outcomes.png',dpi=160);plt.close(fig)
-    design=dict(conditions=CONDITIONS,generations=args.generations,seeds=args.seeds,evaluation_interval=args.eval_every,population=4,genes=GENES,seconds=time.perf_counter()-started,terrain=data['preset'],arena=args.arena,capture=True,food_encoding=args.food_encoding,speed=SPEED,body_radius=2.4,dt=DT,steps=STEPS,occlusion=False,food=True,pellet_count=PELLET_COUNT,food_reward=FOOD_REWARD,food_collection_radius=FOOD_RADIUS,training_starts=2,training_mode=args.training_mode,test_starts=12,notes=['Units are map cells: 12 cells per world unit.','Equal speed; direct bounded velocity outputs; no heading or acceleration.','Both opponent displacement and velocity masked outside range; explicit visibility flag.','Eight shared local terrain rays, range 24 cells; terrain sensing does not reveal opponent.','Predator reward: capture speed plus weak nearest-distance shaping; prey: survival fraction minus capture plus .25 per pellet.','Food: 12 finite pellets, deterministic per start; nearest visible pellet direction and availability flag sensed only by prey. No respawn or hunger.',
+                subset=[r for r in rows if r['condition']==name and r['seed']==seed];gs=sorted(set(r['generation'] for r in subset));ys=[np.mean([r[key] for r in subset if r['generation']==g]) for g in gs];values.append(ys)
+            mean,low,high=seed_mean_interval(values)
+            color=list(plt.rcParams['axes.prop_cycle'].by_key()['color'])[list(CONDITIONS).index(name)]
+            ax.plot(gs,mean,lw=2,label=name,color=color);ax.fill_between(gs,low,high,color=color,alpha=.18)
+    axes[0].set(title='Capture fraction: mean and 95% CI',xlabel='Generation',ylabel='Fraction',ylim=(-.03,1.03));axes[1].set(title='Episode duration (10s = survived)',xlabel='Generation',ylabel='Seconds');axes[2].set(title='Pellets collected by prey',xlabel='Generation',ylabel='Pellets',ylim=(0,PELLET_COUNT));axes[0].legend();fig.savefig(args.output/'outcomes.png',dpi=160);plt.close(fig)
+    design=dict(conditions=conditions,generations=args.generations,seeds=args.seeds,seed_offset=args.seed_offset,evaluation_interval=args.eval_every,population=4,genes=GENES,seconds=time.perf_counter()-started,terrain=data['preset'],arena=args.arena,capture=True,opponent_mode=args.opponent_mode,food_encoding=args.food_encoding,speed=SPEED,body_radius=2.4,dt=DT,steps=STEPS,occlusion=False,food=True,pellet_count=PELLET_COUNT,food_reward=FOOD_REWARD,food_collection_radius=FOOD_RADIUS,training_starts=args.training_starts,training_mode=args.training_mode,test_starts=12,notes=['Units are map cells: 12 cells per world unit.','Equal speed; direct bounded velocity outputs; no heading or acceleration.','Both opponent displacement and velocity masked outside range; explicit visibility flag.','Eight shared local terrain rays, range 24 cells; terrain sensing does not reveal opponent.','Predator reward: capture speed plus weak nearest-distance shaping; prey: survival fraction minus capture plus .25 per pellet.','Food: 12 finite pellets, deterministic per start; nearest visible pellet direction and availability flag sensed only by prey. No respawn or hunger.',
                      'Training encounters are shared by every candidate pairing; resampled mode changes starts and food layouts each generation after the first. Evaluation IDs remain fixed.',
                      'Elitist mutation-only evolution of NN weights; no crossover.','Replays: seed zero, first two held-out starts; frozen after capture.','Small feasibility pilot, not a conclusive comparison.'])
     (args.output/'design.json').write_text(json.dumps(design,indent=2));print(json.dumps(design),flush=True)

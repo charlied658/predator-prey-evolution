@@ -1,0 +1,21 @@
+{
+  "food_rule": "Except during stuck recovery, target the nearest visible uncollected pellet that is not temporarily cooled down. Food takes priority over normal exploration.",
+  "exploration_rule": "If no pellet is visible, target the nearest unvisited grid-cell centre.",
+  "persistence_rule": "Keep an exploration target until its centre is reached or visible food interrupts it.",
+  "fallback_rule": "If every cell has been visited, target the least recently occupied cell.",
+  "movement_rule": "Neural outputs choose heading within 60 degrees of the target direction and throttle from 0.2 to 1.0. Direct reference heads straight to the same target at full speed.",
+  "steering_limit_degrees": 60,
+  "minimum_throttle": 0.2,
+  "goal_reached_distance": 2.4,
+  "scope": "Empty or complex arena. No access to unseen food. No predator, hunger, exploration reward, or pathfinding. Target selection and heading constraints are programmed. On terrain, the 60-degree cone may prevent necessary detours.",
+  "terrain_goal_rule": "Use the nearest clear representative point to each tile centre within the largest body-accessible region; ignore tiles with no accessible sites.",
+  "recovery_enabled": true,
+  "stuck_seconds": 2.0,
+  "stuck_radius": 1.0,
+  "recovery_seconds": 3.0,
+  "target_cooldown_seconds": 20.0,
+  "escape_distance": 12.0,
+  "escape_directions": 16,
+  "recovery_throttle": 0.6,
+  "recovery_rule": "After 2 seconds confined within 1 map cell, set aside the current food/tile target for 20 seconds. Temporarily override food priority; choose a locally collision-clear escape waypoint and steer directly to it at 60% speed for up to 3 seconds, then resume normal rules. Retry only after another 2-second observation window. Recovery is programmed, not evolved."
+}

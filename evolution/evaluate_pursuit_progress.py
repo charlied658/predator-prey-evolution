@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from vision_pilot import episodes,setup,GENES
+from vision_pilot import episodes,setup,GENES,seed_mean_interval
 
 
 def plot_capture_summary(rows,conditions,generations,seeds,out):
@@ -22,9 +22,101 @@ def plot_capture_summary(rows,conditions,generations,seeds,out):
     fig.savefig(out/'capture-summary.png',dpi=170);plt.close(fig)
 
 
+def compare_training(run,baseline,opponent_comparison=False,benchmark_reference=None):
+    """Compare selection batch sizes using one shared frozen opponent panel."""
+    out=run/('opponent-comparison' if opponent_comparison else 'selection-comparison');out.mkdir(exist_ok=False);started=time.perf_counter()
+    old_label='Co-evolution' if opponent_comparison else '2 encounters'
+    new_label='Fixed opponent' if opponent_comparison else '8 encounters'
+    paths={old_label:baseline,new_label:run}
+    designs={k:json.loads((v/'design.json').read_text()) for k,v in paths.items()}
+    histories={k:json.loads((v/'history.json').read_text()) for k,v in paths.items()}
+    d=designs[new_label];seeds=d['seeds'];world=setup(json.loads((run/'terrain.json').read_text()));ranges=d['conditions']['equal'];gs=list(range(0,d['generations']+1,d['evaluation_interval']));rows=[];summary={}
+    for key in ['genes','population','food_encoding','speed','dt','steps','food_reward','training_mode']:
+        assert designs[old_label][key]==d[key],f'Confounded setting: {key}'
+    np.testing.assert_array_equal(json.loads((baseline/'terrain.json').read_text())['solid'],json.loads((run/'terrain.json').read_text())['solid'])
+    if opponent_comparison:
+        assert designs[old_label]['training_starts']==d['training_starts']
+        assert designs[old_label].get('opponent_mode','coevolution')=='coevolution' and d['opponent_mode']=='fixed'
+    else:
+        assert designs[old_label]['training_starts']==2 and d['training_starts']==8
+    reference_panel=None
+    panel_description='Other baseline seeds, initial and final controllers'
+    if benchmark_reference:
+        reference_panel=[]
+        current_ids=set(range(d.get('seed_offset',0),d.get('seed_offset',0)+seeds))
+        for mode in ('coevolution','fixed'):
+            path=benchmark_reference/mode
+            ref=json.loads((path/'design.json').read_text());archive=json.loads((path/'history.json').read_text())
+            reference_ids=set(range(ref.get('seed_offset',0),ref.get('seed_offset',0)+ref['seeds']))
+            if current_ids & reference_ids:raise ValueError('Reference benchmark must use separate evolutionary seeds; set --seed-offset')
+            for key in ('genes','food_encoding','speed','dt','steps','food_reward'):
+                assert ref[key]==d[key],f'Incompatible benchmark: {key}'
+            np.testing.assert_array_equal(json.loads((path/'terrain.json').read_text())['solid'],json.loads((run/'terrain.json').read_text())['solid'])
+            reference_panel += [np.array(archive[f'equal/{seed}/{ref["generations"]}']) for seed in range(ref['seeds'])]
+        panel_description=f'Frozen final controllers from BOTH treatments in {benchmark_reference}; independent evolutionary seeds'
+    elif opponent_comparison:
+        panel_description='Other seeds: initial controllers once, plus final controllers from BOTH treatments; shared between treatments'
+    def champ(mode,seed,g):return np.array(histories[mode][f'equal/{seed}/{g}'])
+    def evaluate(pairs,ids):
+        a=np.repeat(np.array([x for x,y in pairs]),len(ids),axis=0);b=np.repeat(np.array([y for x,y in pairs]),len(ids),axis=0)
+        return episodes(a,b,np.tile(ids,len(pairs)),ranges,world,food_encoding=d['food_encoding']).reshape(len(pairs),len(ids),7)
+    for seed in range(seeds):
+        np.testing.assert_array_equal(champ(old_label,seed,0),champ(new_label,seed,0))
+        ids=np.arange(24)+80000+seed*100
+        if reference_panel is not None:
+            panel=reference_panel
+        elif opponent_comparison:
+            panel=[controller for other in range(seeds) if other!=seed for controller in (champ(old_label,other,0),champ(old_label,other,designs[old_label]['generations']),champ(new_label,other,d['generations']))]
+        else:
+            panel=[champ(old_label,other,g) for other in range(seeds) if other!=seed for g in (0,designs[old_label]['generations'])]
+        for mode in paths:
+            prey_pairs=[(opponent[0],champ(mode,seed,g)[1]) for g in gs for opponent in panel]
+            predator_pairs=[(champ(mode,seed,g)[0],opponent[1]) for g in gs for opponent in panel]
+            prey=evaluate(prey_pairs,ids).reshape(len(gs),len(panel),len(ids),7)
+            predator=evaluate(predator_pairs,ids).reshape(len(gs),len(panel),len(ids),7)
+            for i,g in enumerate(gs):rows.append(dict(training=mode,seed=seed,generation=g,predator_capture=float(predator[i,:,:,2].mean()),predator_fitness=float(predator[i,:,:,0].mean()),prey_survival=float(1-prey[i,:,:,2].mean()),food=float(prey[i,:,:,6].mean()),prey_fitness=float(prey[i,:,:,1].mean())))
+            with (out/'measurements.csv').open('w',newline='') as f:
+                w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
+            print(f'{mode} | seed {seed+1}/{seeds} | benchmark complete | {time.perf_counter()-started:.1f}s',flush=True)
+    fig,axes=plt.subplots(2,2,figsize=(10,7),layout='constrained')
+    for ax,key,title in zip(axes.flat,['predator_capture','prey_survival','food','prey_fitness'],['Predator capture','Prey survival','Prey pellets collected','Prey total fitness']):
+        for mode,color in [(old_label,'#ba6954'),(new_label,'#188b87')]:
+            values=[]
+            for seed in range(seeds):
+                sub=sorted([r for r in rows if r['training']==mode and r['seed']==seed],key=lambda r:r['generation']);ys=[r[key] for r in sub];values.append(ys)
+            values=np.array(values);mean,low,high=seed_mean_interval(values);ax.plot(gs,mean,color=color,lw=2.5,label=mode);ax.fill_between(gs,low,high,color=color,alpha=.18)
+            summary.setdefault(mode,{})[key]=dict(initial=float(values[:,0].mean()),final=float(values[:,-1].mean()),final_seed_means=values[:,-1].tolist(),final_mean_ci95=[float(low[-1]),float(high[-1])],mean_step_change=float(np.abs(np.diff(values,axis=1)).mean()))
+        ax.set(title=title,xlabel='Generation',ylabel='Pellets' if key=='food' else 'Fitness' if key=='prey_fitness' else 'Fraction');ax.legend(fontsize=9)
+        if key in ('predator_capture','prey_survival'):ax.set_ylim(0,1)
+        elif key=='food':ax.set_ylim(0,None)
+    fig.suptitle(('Fixed opponent versus co-evolution' if opponent_comparison else 'Does judging candidates on more encounters improve evolution?')+f'\nMean and pointwise 95% bootstrap CI across {seeds} independent seeds')
+    fig.savefig(out/('opponent-comparison.png' if opponent_comparison else 'selection-comparison.png'),dpi=170);plt.close(fig)
+    difference={}
+    diff_fig,diff_axes=plt.subplots(2,2,figsize=(10,7),layout='constrained')
+    for ax,key,title in zip(diff_axes.flat,['predator_capture','prey_survival','food','prey_fitness'],['Predator capture','Prey survival','Pellets collected','Prey total fitness']):
+        def seed_values(mode):
+            return np.array([[r[key] for r in sorted([r for r in rows if r['training']==mode and r['seed']==seed],key=lambda r:r['generation'])] for seed in range(seeds)])
+        delta=seed_values(old_label)-seed_values(new_label)
+        mean,low,high=seed_mean_interval(delta)
+        ax.axhline(0,color='#777777',lw=1,ls='--');ax.plot(gs,mean,color='#5368a0',lw=2);ax.fill_between(gs,low,high,color='#5368a0',alpha=.2)
+        ax.set(title=title,xlabel='Generation',ylabel=f'{old_label} minus {new_label}')
+        difference[key]=dict(final_mean=float(mean[-1]),final_ci95=[float(low[-1]),float(high[-1])],final_seed_differences=delta[:,-1].tolist())
+    diff_fig.suptitle('Paired treatment differences: positive favours '+old_label+'\nMean and pointwise 95% bootstrap CI across matched seed pairs')
+    diff_fig.savefig(out/'paired-differences.png',dpi=170);plt.close(diff_fig)
+    summary['paired_differences']=difference
+    (out/'summary.json').write_text(json.dumps(summary,indent=2));(out/'design.json').write_text(json.dumps(dict(runs={k:str(v) for k,v in paths.items()},panel=panel_description,confidence_intervals='Pointwise 95% percentile bootstrap of seed trajectories, 10000 resamples; paired differences preserve matched seed pairs',test_starts='24 per seed, IDs 80000 + 100*seed + [0..23]; not used in selection or prior plots',training_difference=('Same candidate generations and 8 starts; frozen generation-zero opponent versus contemporary opponent population; deterministic fixed repeats omitted, so compute is not equal' if opponent_comparison else '2 vs 8 fresh encounters; 8 includes the same first 2; 4x training evaluations at equal generations'),notes=['Search opportunities are matched by generations and candidates; actual simulator cost is reported by each source run.',f'{seeds} evolutionary seeds; individual starting arrangements are not independent evolutionary replicates. Confidence intervals are conditional on the frozen panel; bands are not simultaneous across generations.','No smoothing or best-checkpoint selection.'],seconds=time.perf_counter()-started),indent=2));print(json.dumps(summary),flush=True)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('run',type=Path);args=parser.parse_args();out=args.run/'progress-diagnostic';out.mkdir(exist_ok=False)
+    parser.add_argument('run',type=Path);parser.add_argument('--compare-training',type=Path);parser.add_argument('--compare-opponents',type=Path);parser.add_argument('--benchmark-reference',type=Path);args=parser.parse_args()
+    if args.compare_opponents:
+        compare_training(args.run,args.compare_opponents,opponent_comparison=True,benchmark_reference=args.benchmark_reference)
+        return
+    if args.compare_training:
+        compare_training(args.run,args.compare_training)
+        return
+    out=args.run/'progress-diagnostic';out.mkdir(exist_ok=False)
     started=time.perf_counter();design=json.loads((args.run/'design.json').read_text());history=json.loads((args.run/'history.json').read_text());world=setup(json.loads((args.run/'terrain.json').read_text()))
     seeds=design['seeds'];conditions=design['conditions'];encoding=design['food_encoding'];generations=sorted({int(k.split('/')[-1]) for k in history});historic=generations[::2]
     if generations[-1] not in historic:historic.append(generations[-1])

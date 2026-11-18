@@ -301,3 +301,282 @@ This is retrospective evaluation only and never affects training. The diagnostic
 also measures food collection without capture or opponent inputs and produces
 historical capture matrices. Existing runs without archived controllers need to
 be reproduced before these comparisons are possible.
+
+Selection reliability can be tested by changing `--training-starts` (1 to 8,
+default 2). Use `--conditions equal` to run only the equal-vision condition.
+For example, `--training-starts 8 --conditions equal` gives every candidate the
+same eight fresh arrangements per generation. This includes the original two
+arrangements and uses four times their training evaluations.
+
+The paired selection diagnostic compares an eight-encounter run with a saved
+two-encounter baseline using a single shared fixed panel and fresh test starts:
+
+```powershell
+.\.venv\Scripts\python.exe evolution/evaluate_pursuit_progress.py results/selection-eight-50 --compare-training results/empty-predator-progress-50
+```
+
+Run fixed-opponent evolution versus co-evolution, including shared benchmarks:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/run_opponent_comparison.py --generations 50 --seeds 3 --output results/opponent-comparison-50
+```
+
+Both treatments use equal vision, the empty arena, improved food inputs, eight
+fresh starts per generation, identical initial controllers and mutation streams.
+The fixed treatment evolves predator and prey separately against frozen initial
+opponents. Both treatments use the same number of generations and candidate
+controllers. Deterministic repeat matches against a fixed opponent are omitted;
+actual simulation costs therefore differ. This is a matched search-opportunity
+comparison, not a strict equal-compute experiment. A shared retrospective panel
+from the other co-evolution seeds tests both treatments. All stages print progress.
+Results and replays are grouped under one output directory; the comparison figure
+is `fixed/opponent-comparison/opponent-comparison.png`.
+
+For the 10-seed replication with mean curves and confidence bands:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/run_opponent_comparison.py --generations 50 --seeds 10 --seed-offset 10 --benchmark-reference results/opponent-comparison-50 --output results/opponent-comparison-10seeds
+```
+
+The frozen benchmark contains final controllers from BOTH treatments of the
+previous three-seed pilot. The new run uses separate evolutionary seeds 10–19.
+Plots show means and pointwise 95% percentile bootstrap confidence intervals,
+resampling complete seed trajectories 10,000 times. Games within a seed are
+averaged before bootstrap; they are not counted as independent replicates.
+Bands describe seed variation conditional on this frozen panel, not uncertainty
+across all possible benchmark opponents. `paired-differences.png` bootstraps
+matched seed pairs; positive differences favour co-evolution. The intervals are
+pointwise, not simultaneous tests across all checkpoints. The primary comparison
+still matches candidate generations and starts rather than total simulator cost.
+
+To probe whether prey approach or avoid sensed predators without training:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/probe_prey_sensing.py results/opponent-comparison-10seeds --reference results/opponent-comparison-50
+```
+
+This holds food and body state fixed while varying predator bearings and range.
+It compares immediate movements with prey opponent inputs enabled versus masked,
+then reruns the existing six-predator benchmark with those inputs masked. Physical
+capture remains active. Results go to `prey-sensing-check`; the normal experiment
+is unchanged. Negative radial change means sensing steers away from the predator;
+positive benchmark differences mean sensing improves survival or collection.
+
+Minimal one-prey/one-pellet diagnostic (no predator or terrain):
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/single_pellet.py --generations 50 --seeds 10 --output results/single-pellet-next
+```
+
+Uses the same network, unit food input, body radius, movement and collection
+rules. Eight fresh arrangements per generation; 128 held-out tests per seed.
+The only evolutionary reward is reaching the pellet. A direct-steering reference
+verifies the task is solvable and is never inserted into evolution. Outputs
+include success-rate confidence bands, per-seed results and a replay of the first
+seed's final controller on the first three test arrangements. No settings in the
+predator/prey experiments are changed.
+
+The same minimal diagnostic supports multiple pellets without changing the
+controller or adding predator pressure:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/single_pellet.py --pellet-counts 4 12 --baseline results/single-pellet-50 --output results/pellet-count-next
+```
+
+Larger pellet sets contain the smaller sets at identical starts. Food is initially
+within vision, spaced at least six cells apart. Fitness counts collected pellets;
+the episode continues until all are collected or ten seconds elapse. The root
+comparison plots absolute count, fraction collected and all-food completion with
+seed-based confidence intervals. Each condition has its own replay and data
+subfolder. Direct steering remains limited to visible food, so it may stop when
+remaining pellets are out of range; it is not an optimal routing reference.
+
+Compare whole-map scattered food with and without the complex landscape:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/single_pellet.py --compare-landscapes --pellet-counts 12 --generations 50 --seeds 10 --output results/scattered-landscape-50
+```
+
+This starts both conditions from scratch, without predators. The same starts and
+food layouts are drawn from the complex map's largest body-accessible region,
+which spans the arena. The empty control uses these same sites. All pellets are
+reachable, but may begin outside vision. Vision remains 24 cells with no obstacle
+occlusion. Speed, ten-second horizon, rewards, network and evolutionary settings
+remain unchanged. Root outputs contain mean/95% CI comparison plots; `empty` and
+`terrain` subfolders contain data and actual-terrain replays. The direct reference
+still only steers toward visible food; it has no pathfinding or exploration rule.
+
+Test an exploration reward against food-only fitness in both landscapes:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/single_pellet.py --compare-exploration --pellet-counts 12 --generations 50 --seeds 10 --exploration-reward 0.1 --grid-cells 8 --output results/exploration-reward-50
+```
+
+Fitness is pellets collected plus 0.1 per new centre-occupied tile after the
+starting tile. The 8-by-8 grid resets each encounter; revisits earn nothing.
+The organism does NOT receive this grid as an input. Replays overlay grid lines:
+green open areas are visited, cream areas unvisited, and gray terrain stays gray.
+A tile is visited when the body's centre occupies it at a simulation timestep,
+not when it becomes visible. The root figure compares FOOD collection and tile
+coverage separately, with seed-based confidence bands. Results are grouped by
+`empty`/`terrain`, then `food-only`/`exploration`, with replays inside `12-pellets`.
+The full four-condition run preserves other learning settings and prints progress.
+
+Compare feedforward and recurrent controllers without predators:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/single_pellet.py --compare-memory --pellet-counts 12 --generations 50 --seeds 10 --exploration-reward 0 --output results/controller-memory-50
+```
+
+Uses scattered food in matched empty/complex arenas. Feedforward controllers have
+8 hidden units and 170 weights. Recurrent controllers have 6 hidden units and
+164 weights, including a 6-by-6 recurrent matrix. Both see the same 18 inputs;
+the visited grid remains evaluator-only. Hidden state starts at zero for EACH
+encounter. A third curve evaluates each recurrent champion with state reset every
+step, without training a new controller or feeding ablation scores to selection.
+Both training treatments use food-only reward, 4 candidates, 8 training starts,
+128 fixed test starts and identical mutation settings. Matching seeds pair layouts
+and RNG seeds, not initial behaviours, because controller shapes differ.
+Results contain mean/95% CI curves, paired endpoint differences and grid-overlay
+replays grouped under `empty`/`terrain`, then `feedforward`/`recurrent`. A reset
+penalty establishes use of temporal state, not necessarily sophisticated memory.
+
+Test an explicit visited-area map in the EMPTY arena only:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/single_pellet.py --compare-visited-map --pellet-counts 12 --generations 50 --seeds 10 --exploration-reward 0 --grid-cells 8 --output results/visited-map-50
+```
+
+Both trained controllers receive local observations and absolute x/y position.
+The map treatment also receives 64 binary centre-visit flags; the position-only
+control has these channels fixed to zero. Both networks have 84 inputs, 8 hidden
+units and 698 weights. The same map-trained controller is additionally evaluated
+with visit history blanked while keeping position and local sensors unchanged.
+Map flags reset each encounter and never reveal food outside vision. Replays
+retain the visited-grid overlay. Food is scattered across the entire empty arena;
+there is no terrain, predator, or exploration reward. Mutation retains the old
+per-weight rate (49 changed weights per child for this larger genome, sigma .35).
+Thus this tests history input with matched architectures, rather than comparing
+the larger network directly with the old 170-weight baseline. Outputs contain
+mean/95% CI food and coverage curves plus paired endpoint differences.
+
+Completed foraging conditions are now automatically reusable. Each new
+`run_count` saves a compatibility fingerprint covering settings, controller,
+world arrays, simulation/training code, and artifact hashes. A registry under
+`results/.foraging-cache` locates exact matches. Matching runs print `REUSED` and
+copy saved results/replays into the new experiment; they do not retrain. Missing,
+incomplete, incompatible or modified automatic cache entries are rejected.
+Completed sources are never modified. Keep source run folders to retain reuse.
+
+For the visited-map experiment, an existing position-only control can also be
+selected explicitly:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/single_pellet.py --compare-visited-map --pellet-counts 12 --generations 50 --seeds 10 --exploration-reward 0 --grid-cells 8 --reuse-control results/visited-map-50/position-only/12-pellets --output results/visited-map-followup
+```
+
+The source must be complete and match exactly. Older runs without a fingerprint
+are checked against their saved configuration and their initial/final held-out
+scores are re-evaluated, without evolution. This validates numerical compatibility
+but cannot reconstruct missing training provenance. Verified copies receive a
+fingerprint for future reuse. A 170-weight feedforward run is NOT interchangeable
+with the 698-weight position-only control. For a first visit-map experiment this
+new control must still be trained once. Unlike a fresh search, legacy verification
+is a small fixed evaluation cost. Broader historical benchmarks can still be
+compared descriptively, without treating different configurations as controls.
+
+Explicit forage/explore instructions (empty arena only):
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/single_pellet.py --hybrid-test --pellet-counts 12 --generations 20 --seeds 5 --output results/hybrid-instructions-next
+```
+
+The authoritative rules are in `evolution/hybrid_instructions.json` and are copied
+into each experiment's `instructions.json`:
+
+1. Nearest visible uncollected food takes priority.
+2. Without visible food, target the nearest unvisited grid-cell centre.
+3. Keep that exploration target until its centre is reached or food interrupts.
+4. After all tiles are visited, target the least recently occupied tile.
+5. Neural outputs select heading within 60 degrees of the target and throttle
+   between 20% and 100% of maximum, enforcing movement toward the target.
+
+Target selection, map tracking, goal persistence and movement constraints are
+PROGRAMMED. Evolution only optimises the 170-weight controller's heading offset
+and throttle. Its inputs include goal direction/distance, forage/explore mode,
+own velocity and boundary rays. No unseen food or raw 64-cell map enters the NN.
+The same rule selector with direct full-speed steering is a scripted reference;
+it is not an optimal search algorithm. Charts separate the unevolved hybrid,
+evolved steering and scripted reference. Food collection is the only reward.
+Replays show the purple current goal and forage/explore status over visited tiles.
+Do not describe this experiment as evolution inventing the foraging strategy.
+
+Restore complex terrain for the hybrid controller:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/single_pellet.py --hybrid-test --hybrid-arena terrain --pellet-counts 12 --generations 20 --seeds 5 --output results/hybrid-terrain-20
+```
+
+Uses the exported broad-outcrops map, the shared swept-circle collision solver,
+and scattered food in its largest body-accessible region. Exploration targets
+use a clear representative point in each tile; tiles without reachable sites are
+ignored. Food remains visible through obstacles. Target priorities, persistent
+goals, nearest-unvisited selection, minimum throttle and 60-degree steering cone
+remain programmed rules. No pathfinding is added: the cone can prevent detours
+that require moving away from a goal. The direct scripted reference uses the same
+goals and collision rules and may also get stuck. This is an evaluation of the
+current hybrid on terrain, not a claim of generally competent navigation. Data,
+instructions, terrain, confidence-band graphs and purple-goal replays are saved.
+
+Longer inspection of saved hybrid controllers, with no retraining:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/replay_foraging.py results/hybrid-terrain-20 --seconds 120 --output results/hybrid-terrain-long-next
+```
+
+Uses the first three saved controller seeds and the first held-out start of each,
+without selecting successes. Outputs include `long-replays.gif` (4x playback),
+`viewer.html` (standalone player with 1x/2x/4x/8x, pause and seek), full replay JSON,
+per-example metrics and a food/coverage-over-time figure. Coverage is the fraction
+of body-accessible grid tiles entered by the centre, not all visible ground.
+A red outline indicates that the centre stayed within one cell of its current
+position during the previous two seconds while food remains. Contact counters
+count collision-solver iterations; they are not unique wall encounters. These
+are longer evaluations of ten-second-trained controllers, not longer training.
+
+Hybrid stuck recovery is now explicitly specified in `hybrid_instructions.json`:
+when the body stays within one cell for two seconds, cool down the current target
+for 20 seconds. Temporarily override food priority and follow a collision-clear
+local escape waypoint directly at 60% speed, for up to three seconds or until
+reached. The waypoint is selected from 16 local directions out to 12 cells,
+favouring clearance and backing away from the blocked goal. Normal NN steering
+then resumes. Recovery is scripted, not evolved, and does not implement routing.
+
+To apply the new rule to the SAME saved controllers and long starts:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/replay_foraging.py results/hybrid-terrain-20 --seconds 120 --enable-recovery --output results/hybrid-terrain-recovery-next
+```
+
+Without `--enable-recovery`, saved old runs preserve their original recovery-off
+setting. New hybrid training uses the new rule by default. The replay comparison
+therefore isolates a programmed-rule intervention without retraining. Recordings
+include recovery counts and `recover` mode, and save the applied instruction spec.
+
+Larger paired recovery benchmark, using saved controllers without retraining:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/benchmark_recovery.py results/hybrid-terrain-20 --starts 32 --seconds 120 --output results/recovery-benchmark-next
+```
+
+Uses all five controller seeds on 32 fresh arrangements each: 160 encounters per
+condition, paired recovery off/on. Food and visited-tile trajectories are sampled
+once per second. `recovery-means-ci.png` shows means and pointwise 95% bootstrap
+confidence bands; `paired-differences.png` shows on-minus-off effects. Bootstrap
+resamples whole controller seeds after averaging their starts, preserving paired
+conditions. Thus 160 encounters are NOT treated as 160 independent evolved
+controllers: only five independent controller seeds support those intervals.
+Coverage percentages use reachable grid tiles; raw visited counts include the
+starting tile. The benchmark is conditional on this single map. Encounter CSV,
+seed-average trajectories and compressed per-encounter curves are saved so plots
+can be changed without rerunning simulation.
