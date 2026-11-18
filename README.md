@@ -217,3 +217,87 @@ python3 -m unittest discover -s evolution -p 'test_*.py' -v
 The earlier pairwise neural controllers, experiments, and replay code have been
 removed from the current tree. They remain available in Git history. Local saved
 results are preserved; this version uses ecosystem configuration files.
+
+## Vision-range pilot on procedural terrain
+
+This isolated NumPy pilot uses the exported broad-outcrops map and the swept
+circle collision solver. It compares equal vision (2 world units each), longer
+prey vision (2 versus 4), and longer predator vision (4 versus 2). Only neural
+network weights evolve. Speeds are equal, prey collect 12 finite pellets, and obstacles do not
+block sight. This does not change the main Godot ecosystem.
+
+```powershell
+.\.venv\Scripts\python.exe evolution/vision_pilot.py --output results/vision-pilot-next
+```
+
+Requires NumPy, Matplotlib, Pillow, and the map exported to
+`results/landscape-previews/map-0-seed-42.json` by the landscape preview.
+Defaults: three seeds, 12 generations, four individuals per role. Each generation
+uses all population pairings on two training starts; evaluation uses 12 separate
+starts. Outputs include measurements, genomes, terrain, a comparison figure,
+and two animated replays. Range circles show sensing distance; white body
+outlines indicate that the organism currently sees its opponent. Replays freeze
+when capture occurs. This small pilot tests feasibility, not statistical certainty.
+
+The food version adds 0.25 prey reward per pellet alongside survival, with no
+hunger. Prey sense the nearest uncollected pellet within their vision range;
+longer vision therefore helps detect both food and opponents. Replays show
+remaining food and collection totals, and the results figure includes collection.
+
+Training arrangements now change every generation by default (`--training-mode
+resampled`). All candidate pairings share the same two arrangements within a
+generation. Starting positions and pellet layouts change together; the 12
+held-out evaluation arrangements remain fixed. Use `--training-mode fixed` to
+reproduce the earlier experiment with two repeated training arrangements.
+
+For an isolated population-size check, run:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/vision_pilot.py --foraging-population-test --generations 50 --seeds 3 --eval-every 5 --output results/foraging-population-next
+```
+
+This compares 4 and 16 prey controllers without capture or opponent inputs.
+Food sensing, movement, and pellet rewards are unchanged; no approach reward is
+added. Training arrangements vary; each seed has 24 fixed held-out encounters.
+Population 16 uses four times the training evaluations at equal generations.
+The output includes a comparison figure and a final food-sensor ablation check.
+
+To test food representation and obstacles independently:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/vision_pilot.py --foraging-factor-test --generations 50 --seeds 3 --eval-every 5 --output results/foraging-factors-next
+```
+
+This food-only 2-by-2 diagnostic compares original food displacement inputs
+with unit direction inputs, in the terrain map and an empty arena. Both arenas
+use identical starts and pellet locations drawn from terrain-valid sites.
+Population remains 16, vision remains 24 cells, and only pellet collection earns
+variable reward. No approach reward or hunger is added. Unit direction removes
+the distance information previously implicit in displacement magnitude, without
+changing the network size. The normal vision experiment retains original inputs.
+
+Restore predator/prey co-evolution in an empty arena with improved food inputs:
+
+```powershell
+.\.venv\Scripts\python.exe -u evolution/vision_pilot.py --arena empty --food-encoding unit --generations 50 --seeds 3 --eval-every 5 --output results/empty-predator-50
+```
+
+This starts fresh with four controllers per role and runs the three vision
+conditions. Capture ends the encounter. Speeds are equal, prey receive survival
+and pellet rewards, and training arrangements change each generation. Graphs,
+measurements, and vision-circle replays are saved in the output folder.
+
+Normal pursuit runs now save `history.json` at each evaluation checkpoint.
+After a run with at least two seeds, compare contemporary, fixed-panel, and
+historical opponents with:
+
+```powershell
+.\.venv\Scripts\python.exe evolution/evaluate_pursuit_progress.py results/empty-predator-progress-50
+```
+
+Outputs go into `progress-diagnostic` inside that run. The stable panel contains
+initial and final controllers from the other independent evolutionary seeds.
+This is retrospective evaluation only and never affects training. The diagnostic
+also measures food collection without capture or opponent inputs and produces
+historical capture matrices. Existing runs without archived controllers need to
+be reproduced before these comparisons are possible.
