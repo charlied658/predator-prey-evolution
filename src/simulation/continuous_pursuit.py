@@ -128,7 +128,11 @@ def continuous_steps(predators,prey_genomes,ids,world,rules,seconds,pellet_count
         old=pos.copy();was_active=active.copy();fractions=np.ones((n,k));tag=np.zeros((n,k),bool)
         for row in range(n):
             near=active[row] & (distance[row]<=2*collider.radius+2*rules['speed']*DT)
-            pred_path=[] if near.any() else None
+            # Peer impulses can accelerate an individual past its commanded
+            # speed. The old distance guard is valid only without peer physics.
+            # Always give that solver the predator path so captures are not
+            # missed when another prey pushes a body into the predator.
+            pred_path=[] if rules.get('prey_collisions',False) or near.any() else None
             pos[row,0]=collider.move(pos[row,0],desired_pred[row]*DT,path=pred_path)[0]
             paths=None
             if rules.get('prey_collisions',False):
@@ -162,6 +166,10 @@ def continuous_steps(predators,prey_genomes,ids,world,rules,seconds,pellet_count
                     available[row,index]=False;food_due[row,index]=tick+1+delay
         velocity=(pos-old)/DT
         captures+=tag.sum(axis=1);active[tag]=False;due[tag]=tick+1+delay
+        if rules.get('prey_collisions',False):
+            separation=np.linalg.norm(pos[:,1:]-pos[:,0,None],axis=-1)
+            if np.any(active & (separation<2*collider.radius-1e-6)):
+                raise RuntimeError('Active prey overlaps predator after capture resolution')
         weight=was_active*fractions*DT;alive_time+=weight
         detected+=visible*weight;avoiding+=qp.avoiding.reshape(n,k)*weight
         nearest=np.where(was_active,distance,np.inf).min(axis=1);proximity+=np.exp(-nearest/12)*DT/seconds

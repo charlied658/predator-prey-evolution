@@ -45,6 +45,23 @@ class ContinuousChecks(unittest.TestCase):
         self.assertEqual(p.last[0].max(),400)
         self.assertFalse(p.avoiding[0])
 
+    def test_peer_impulse_cannot_skip_predator_capture(self):
+        # Both prey start outside the old 8.4-cell capture prefilter. A glancing
+        # peer impulse makes prey 1 faster than its commanded speed and pushes
+        # it into the moving predator within this very timestep.
+        world=(self.world[0],np.array([[40.,48.]]),self.world[2])
+        prey=np.array([48.41,48.]);other=prey+4.800001/np.sqrt(2)
+        placements=[prey,other,np.array([80.,80.])]
+        angle=np.deg2rad(20)
+        def commands(policy,*args,**kwargs):
+            return np.array([[18.,0.]]) if policy.role==0 else np.array([[-18*np.cos(angle),18*np.sin(angle)],[-18.,0.]])
+        with patch('src.simulation.continuous_pursuit.spawn_site',side_effect=placements),patch.object(OrganismPolicy,'command',commands):
+            trace=[]
+            result=continuous_episodes(np.zeros((1,GENES)),np.zeros((1,GENES)),[1],world,dict(self.rules,prey_collisions=True),DT,1,8,trace,False,None)
+        self.assertEqual(result[0,2],1)
+        self.assertEqual(trace[-1]['active'],[False,True])
+        self.assertTrue(any(e['type']=='capture' for e in trace[-1]['events']))
+
     def test_capture_respawns_and_pellet_is_awarded_once(self):
         # Captured prey subsequently stays still after the spawn.
         def commands(policy,genes,position,*args,**kwargs):

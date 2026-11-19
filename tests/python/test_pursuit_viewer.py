@@ -6,7 +6,7 @@ import tkinter as tk
 import unittest
 import numpy as np
 from src.simulation.continuous_pursuit import continuous_steps,continuous_episodes
-from src.viewer.pursuit_viewer import PursuitViewer,load_terrain
+from src.viewer.pursuit_viewer import PursuitViewer,load_terrain,load_run
 from src.training.hybrid_pursuit import RULES,HYBRID_INSTRUCTIONS
 from src.simulation.vision_pilot import GENES,setup
 
@@ -43,6 +43,14 @@ class ViewerChecks(unittest.TestCase):
         root=tk.Tk();root.withdraw()
         try:
             viewer=PursuitViewer(root,self.path,autoplay=False);root.update_idletasks()
+            # Include half the centred stroke on either side: painted body
+            # diameter must match physics even with the selected white border.
+            scale=viewer.geometry()[0]/96
+            for item in viewer.canvas.find_withtag('organism'):
+                x0,y0,x1,y1=viewer.canvas.coords(item)
+                width=float(viewer.canvas.itemcget(item,'width'))
+                self.assertAlmostEqual(x1-x0+width,2*viewer.world[0].radius*scale)
+                self.assertAlmostEqual(y1-y0+width,2*viewer.world[0].radius*scale)
             initial=json.dumps(viewer.frame);viewer.single_step()
             self.assertEqual(viewer.frame['seconds'],.1)
             before=json.dumps(viewer.frame)
@@ -90,6 +98,21 @@ class ViewerChecks(unittest.TestCase):
     def test_invalid_map_is_rejected(self):
         path=self.path/'invalid.json';path.write_text(json.dumps(dict(resolution=12,solid=[0]*144)))
         with self.assertRaisesRegex(ValueError,'96 x 96'):load_terrain(path)
+
+    def test_legacy_controller_run_enables_viewer_body_collisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)
+            for name in ('terrain.json','champions.json'):
+                (path/name).write_bytes((self.path/name).read_bytes())
+            legacy=dict(self.rules);legacy.pop('prey_collisions')
+            instructions=path/'instructions.json'
+            instructions.write_text(json.dumps(dict(pursuit=legacy,foraging_and_recovery=HYBRID_INSTRUCTIONS)))
+            original=instructions.read_bytes()
+            self.assertTrue(load_run(path)[2]['prey_collisions'])
+            self.assertEqual(instructions.read_bytes(),original)
+            legacy['prey_collisions']=False
+            instructions.write_text(json.dumps(dict(pursuit=legacy,foraging_and_recovery=HYBRID_INSTRUCTIONS)))
+            self.assertFalse(load_run(path)[2]['prey_collisions'])
 
 
 if __name__=='__main__':unittest.main()

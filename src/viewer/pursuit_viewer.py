@@ -2,6 +2,7 @@
 
 from src.paths import ROOT
 import argparse
+import secrets
 
 from collections import deque, OrderedDict
 
@@ -83,7 +84,10 @@ def load_run(path):
 
     # enabled rules rather than silently claiming it reproduces their old task.
 
-    rules.setdefault('prey_collisions',False);rules.setdefault('random_prey_targets',False)
+    # Legacy runs predate this flag. The interactive sandbox should use solid
+    # prey bodies for them too; direct historical evaluations still retain the
+    # engine's old default. Explicit collision-off comparison runs stay off.
+    rules.setdefault('prey_collisions',True);rules.setdefault('random_prey_targets',False)
 
     history=json.loads((path/'history.json').read_text()) if (path/'history.json').exists() else {}
 
@@ -232,7 +236,7 @@ class PursuitViewer:
 
         ttk.Button(row,text='Generate',command=self.generate_map).pack(side='left',expand=True,fill='x')
 
-        ttk.Button(row,text='New map seed',command=self.new_map).pack(side='left',expand=True,fill='x',padx=(4,0))
+        ttk.Button(row,text='Random map seed',command=self.new_map).pack(side='left',expand=True,fill='x',padx=(4,0))
 
         ttk.Label(maps,textvariable=self.map_details,wraplength=285).pack(anchor='w')
 
@@ -340,8 +344,8 @@ class PursuitViewer:
             self.status.set('Cannot generate map: '+str(error));return False
 
     def new_map(self):
-        try:self.map_seed.set(str(int(self.map_seed.get())+1));return self.generate_map()
-        except ValueError:self.status.set('Enter an integer map seed');return False
+        self.map_seed.set(str(secrets.randbelow(2**31)))
+        return self.generate_map()
 
     def save_map(self):
         path=filedialog.asksaveasfilename(title='Save selected terrain',defaultextension='.json',filetypes=[('Terrain JSON','*.json')],initialfile='terrain.json')
@@ -610,7 +614,11 @@ class PursuitViewer:
                 gx,gy=coords(f['goals'][j]);c.create_line(x,y,gx,gy,fill=color,dash=(4,3),tags=('waypoint',f'waypoint-{j}'));c.create_oval(gx-3,gy-3,gx+3,gy+3,outline=color,tags=('waypoint',f'waypoint-{j}'))
             if flags['Final targets']:
                 gx,gy=coords(f['targets'][j]);c.create_line(x,y,gx,gy,fill=color,stipple='gray50',tags=('target',f'target-{j}'));c.create_line(gx-5,gy,gx+5,gy,fill=color,tags='target');c.create_line(gx,gy-5,gx,gy+5,fill=color,tags='target')
-            r=2.4*scale;c.create_oval(x-r,y-r,x+r,y+r,fill=color,outline='white' if j in selected else '#172321',width=3 if j in selected else 1,tags='organism')
+            # Tk centres strokes on the oval boundary. Inset the border so its
+            # outer edge, including selection highlighting, matches the body.
+            width=3 if j in selected else 1
+            r=max(0.,self.world[0].radius*scale-width/2)
+            c.create_oval(x-r,y-r,x+r,y+r,fill=color,outline='white' if j in selected else '#172321',width=width,tags='organism')
             if flags['Labels']:c.create_text(x,y-r-9,text='Predator' if j==0 else f'Prey {j}',fill='#172321',font=('Segoe UI',10,'bold'),tags=('label',f'label-{j}'))
         modes=' | '.join(('P' if j==0 else str(j))+': '+mode for j,mode in enumerate(f['modes']))
         self.stats.set(f'Time {f["seconds"]:.1f}s   |   Captures {f["captures"]}   |   Food {sum(f["food"]):g}   |   Active prey {sum(f["active"])}/{len(f["active"])}\n{modes}')
