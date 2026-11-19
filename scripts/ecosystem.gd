@@ -26,7 +26,7 @@ var energy_integral := {"predator": 0.0, "prey": 0.0}
 var living_time := {"predator": 0.0, "prey": 0.0}
 
 func _ready() -> void:
-	var path := "res://evolution/ecosystem.json"
+	var path := "res://src/configs/ecosystem.json"
 	var args := OS.get_cmdline_user_args()
 	for i in range(args.size()):
 		if args[i] == "--ecosystem-config" and i + 1 < args.size():

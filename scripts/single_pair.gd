@@ -35,7 +35,7 @@ var circle_rocks: Array = []
 var tag_cooldown := 0.0
 
 func _ready() -> void:
-	var path := "res://evolution/single_pair.json"
+	var path := "res://src/configs/single_pair.json"
 	var args := OS.get_cmdline_user_args()
 	for i in range(args.size()):
 		if args[i] == "--ecosystem-config" and i + 1 < args.size():
@@ -127,7 +127,7 @@ func validate_config() -> bool:
 					fail("Foraging genomes must contain finite weights")
 					return false
 	# Saved legacy configurations are upgraded at the simulation boundary.
-	var defaults = JSON.parse_string(FileAccess.get_file_as_string("res://evolution/single_pair.json"))
+	var defaults = JSON.parse_string(FileAccess.get_file_as_string("res://src/configs/single_pair.json"))
 	for key in defaults:
 		if not cfg.has(key):
 			cfg[key] = defaults[key]

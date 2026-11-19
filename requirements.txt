@@ -1,2 +1,3 @@
-# Optional plotting dependency; simulation and CSV output use the standard library.
+numpy>=1.26
+Pillow>=10.1
 matplotlib>=3.8

@@ -8,3 +8,8 @@ results/
 evolution/.DS_STORE
 
 .venv/
+
+src/configs/config.json
+*.egg-info/
+build/
+dist/
