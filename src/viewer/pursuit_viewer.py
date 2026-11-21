@@ -29,6 +29,7 @@ from src.simulation.vision_pilot import GENES,DT,setup
 from src.terrain.terrain_navigation import navigation
 
 from src.terrain.procedural_terrain import generate_terrain
+from src.simulation.hunger_tree import DEFAULTS as HUNGER_DEFAULTS,FEATURES,PREDATOR_FEATURES,BASELINE,PREDATOR_BASELINE,action,tree_text,viewer_steps
 
 
 
@@ -62,6 +63,8 @@ def load_run(path):
 
     path=Path(path).resolve()
 
+    if (path/'trees.json').exists():return load_tree_run(path)
+
     champions=json.loads((path/'champions.json').read_text())
 
     valid={str(k):np.asarray(v,float) for k,v in champions.items()}
@@ -94,14 +97,51 @@ def load_run(path):
     return path,valid,rules,history,load_terrain(path/'terrain.json')
 
 
+def load_tree_run(path):
+    saved=json.loads((path/'trees.json').read_text());design=json.loads((path/'design.json').read_text())
+    champions=saved.get('champions',{});history=saved.get('history',{})
+    def validate(node,depth=0,role='prey'):
+        if not isinstance(node,dict) or depth>12:raise ValueError('Invalid decision tree')
+        if 'action' in node:
+            kind=node['action']
+            if kind in ('approach','away'):
+                if node.get('object') not in (('prey',) if role=='predator' else ('food','predator')) or node.get('rank') not in (0,1,2) or node.get('order') not in ('distance','route_distance'):raise ValueError('Invalid object action')
+            elif kind=='location':
+                if node.get('selector') not in ('unvisited','oldest','random'):raise ValueError('Invalid location action')
+            elif kind!='stay' and not (kind=='continue' and role=='predator'):raise ValueError('Unknown tree action')
+        else:
+            if node.get('feature') not in (PREDATOR_FEATURES if role=='predator' else FEATURES) or not np.isfinite(node.get('threshold',np.nan)):raise ValueError('Invalid tree condition')
+            validate(node.get('yes'),depth+1,role);validate(node.get('no'),depth+1,role)
+    if not champions:raise ValueError('Tree run has no saved champions yet')
+    for tree in list(champions.values())+list(history.values()):validate(tree)
+    predators=saved.get('predator_champions',{});predator_history=saved.get('predator_history',{})
+    for tree in list(predators.values())+list(predator_history.values()):validate(tree,role='predator')
+    for tree in list(saved.get('fixed_champions',{}).values())+list(saved.get('fixed_history',{}).values()):validate(tree)
+    if predators and set(predators)!=set(champions):raise ValueError('Missing paired predator controllers')
+    config=dict(HUNGER_DEFAULTS,**design['config'])
+    for key in ('seconds','initial_hunger','maximum_hunger','metabolism','pellet_energy','decision_seconds','memory_seconds'):
+        if not np.isfinite(config[key]) or config[key]<=0:raise ValueError('Invalid hunger configuration')
+    rules=dict(controller_kind='hunger-tree',hunger_config=config,prey_count=1,respawn=False,
+               prey_vision=config['prey_vision'],predator_vision=config['predator_vision'],vision_occlusion=True,
+               memory_half_life=config['memory_seconds'],prey_collisions=True,random_prey_targets=False,
+               food_spawn_mode=config.get('food_spawn_mode','soft'),food_spawn_scale=config.get('food_spawn_scale',12))
+    if predators:
+        rules['predator_trees']=dict(champions=predators,history=predator_history,baseline=saved.get('baseline_predator',PREDATOR_BASELINE))
+        rules['control_prey']=dict(champions=saved.get('fixed_champions',{}),history=saved.get('fixed_history',{}))
+    if (path/'terrain.json').exists():terrain=load_terrain(path/'terrain.json')
+    elif not design.get('budget',{}).get('terrain_map'):terrain=dict(resolution=96,solid=[0]*96**2,preset='Empty arena')
+    else:raise ValueError('Tree run is missing its terrain snapshot')
+    return path,champions,rules,history,terrain
+
+
 
 
 
 def latest_run():
 
-    candidates=[p for p in (ROOT/'results').glob('*') if (p/'champions.json').exists() and (p/'instructions.json').exists()]
+    candidates=[p for p in (ROOT/'results').glob('*') if ((p/'champions.json').exists() and (p/'instructions.json').exists()) or ((p/'trees.json').exists() and (p/'design.json').exists())]
 
-    for p in sorted(candidates,key=lambda p:(p/'champions.json').stat().st_mtime,reverse=True):
+    for p in sorted(candidates,key=lambda p:(p/('trees.json' if (p/'trees.json').exists() else 'champions.json')).stat().st_mtime,reverse=True):
 
         try:load_run(p);return p
 
@@ -120,12 +160,14 @@ class PursuitViewer:
         self.root=root;root.title('Predator / prey — live simulation viewer');root.geometry('1220x880');root.minsize(1000,740)
 
         self.playing=autoplay;self.frame=None;self.generator=None;self.trail=deque(maxlen=101)
+        self.kind='neural'
 
         self.worlds=OrderedDict();self.outlines=OrderedDict();self.photo=None;self.closed=False;self.after_id=None
 
         self.speed=tk.StringVar(value='1');self.seed=tk.StringVar(value='90000000');self.duration=tk.StringVar(value='120')
 
         self.prey_count=tk.StringVar(value='3');self.controller=tk.StringVar();self.generation=tk.StringVar(value='Final');self.map_name=tk.StringVar(value='Training map')
+        self.prey_condition=tk.StringVar(value='Saved controller');self.predator_generation=tk.StringVar(value='Fixed baseline')
 
         self.memory_for=tk.StringVar(value='Prey 1');self.status=tk.StringVar(value='Loading controllers…');self.stats=tk.StringVar();self.rule_text=tk.StringVar()
 
@@ -153,6 +195,7 @@ class PursuitViewer:
     def _controls(self):
 
         style=ttk.Style();style.theme_use('clam')
+        style.configure('Hunger.Horizontal.TProgressbar',background='#239b9d',troughcolor='#dcd9d0')
 
         outer=ttk.Frame(self.root,padding=14);outer.pack(fill='both',expand=True)
 
@@ -167,6 +210,11 @@ class PursuitViewer:
         run=ttk.Frame(tabs,padding=10);maps=ttk.Frame(tabs,padding=10);display=ttk.Frame(tabs,padding=10)
 
         tabs.add(run,text='Run');tabs.add(maps,text='Map & food');tabs.add(display,text='Overlays')
+        tree_tab=ttk.Frame(tabs,padding=10);tabs.add(tree_tab,text='Tree')
+        ttk.Label(tree_tab,text='Selected controller program',font=('Segoe UI',11,'bold')).pack(anchor='w',pady=(0,8))
+        self.tree_widget=tk.Text(tree_tab,width=32,height=30,wrap='word',font=('Consolas',10),state='disabled')
+        tree_scroll=ttk.Scrollbar(tree_tab,command=self.tree_widget.yview);tree_scroll.pack(side='right',fill='y')
+        self.tree_widget.configure(yscrollcommand=tree_scroll.set);self.tree_widget.pack(fill='both',expand=True)
 
         def combo(parent,label,var,values,command):
 
@@ -183,6 +231,8 @@ class PursuitViewer:
         self.controller_box=combo(run,'Controller seed',self.controller,[],self.controller_changed)
 
         self.generation_box=combo(run,'Saved generation',self.generation,['Final'],self.restart)
+        self.condition_box=combo(run,'Prey training condition',self.prey_condition,['Saved controller'],self.condition_changed)
+        self.predator_box=combo(run,'Predator generation',self.predator_generation,['Fixed baseline'],self.restart)
 
         form=ttk.Frame(run);form.pack(fill='x',pady=12)
 
@@ -190,7 +240,9 @@ class PursuitViewer:
 
             ttk.Label(form,text=label).grid(row=row,column=0,sticky='w',pady=4)
 
-            ttk.Spinbox(form,textvariable=var,from_=low,to=high,width=13).grid(row=row,column=1,sticky='e',padx=8)
+            spin=ttk.Spinbox(form,textvariable=var,from_=low,to=high,width=13)
+            spin.grid(row=row,column=1,sticky='e',padx=8)
+            if label=='Prey count':self.prey_count_widget=spin
 
         buttons=ttk.Frame(run);buttons.pack(fill='x',pady=6)
 
@@ -274,7 +326,11 @@ class PursuitViewer:
 
         right=ttk.Frame(outer);right.pack(side='left',fill='both',expand=True)
 
-        ttk.Label(right,textvariable=self.stats,font=('Segoe UI',11),justify='left').pack(anchor='w',pady=(0,6))
+        ttk.Label(right,textvariable=self.stats,font=('Segoe UI',11),justify='left',wraplength=800).pack(anchor='w',pady=(0,6))
+        self.hunger_value=tk.DoubleVar(value=1);self.hunger_info=tk.StringVar()
+        self.hunger_frame=ttk.Frame(right)
+        ttk.Label(self.hunger_frame,textvariable=self.hunger_info).pack(side='left',padx=(0,10))
+        ttk.Progressbar(self.hunger_frame,variable=self.hunger_value,maximum=1,style='Hunger.Horizontal.TProgressbar').pack(side='left',fill='x',expand=True)
 
         self.canvas=tk.Canvas(right,background='#172321',highlightthickness=0);self.canvas.pack(fill='both',expand=True)
 
@@ -289,6 +345,17 @@ class PursuitViewer:
         path,champions,rules,history,terrain=load_run(run)
 
         self.run=path;self.champions=champions;self.rules=rules;self.history=history
+        self.kind=rules.get('controller_kind','neural')
+        paired=bool(rules.get('predator_trees'))
+        self.condition_box.configure(values=['Co-evolution','Fixed predator control'] if paired else ['Saved controller'],state='readonly' if paired else 'disabled')
+        self.prey_condition.set('Co-evolution' if paired else 'Saved controller')
+        if paired:self.seed.set('200000000')
+        self.predator_generation.set('Final' if paired else 'Fixed baseline');self.predator_box.configure(state='readonly' if paired else 'disabled')
+        self.prey_count_widget.configure(state='disabled' if self.kind=='hunger-tree' else 'normal')
+        if self.kind=='hunger-tree':
+            self.duration.set(str(rules['hunger_config']['seconds']))
+            self.hunger_frame.pack(fill='x',pady=(0,7),before=self.canvas)
+        else:self.hunger_frame.pack_forget()
 
         self.run_label.config(text=path.name)
 
@@ -323,11 +390,20 @@ class PursuitViewer:
     def controller_changed(self):
 
         values=['Final']+[str(g) for g in sorted(int(key.split('/')[1]) for key in self.history if key.split('/')[0]==self.controller.get())]
+        if self.kind=='hunger-tree':values+=['Scripted baseline','Stationary']
 
         self.generation_box['values']=values
 
         if self.generation.get() not in values:self.generation.set('Final')
+        pred=self.rules.get('predator_trees')
+        pred_values=['Fixed baseline'] if not pred else ['Final','Fixed baseline']+[str(g) for g in sorted(int(k.split('/')[1]) for k in pred['history'] if k.split('/')[0]==self.controller.get())]
+        self.predator_box['values']=pred_values
+        if self.predator_generation.get() not in pred_values:self.predator_generation.set(pred_values[0])
 
+        self.restart()
+
+    def condition_changed(self):
+        self.predator_generation.set('Fixed baseline' if self.prey_condition.get()=='Fixed predator control' else 'Final')
         self.restart()
 
     def generate_map(self):
@@ -390,6 +466,7 @@ class PursuitViewer:
         try:
 
             seed=int(self.seed.get());seconds=float(self.duration.get());count=int(self.prey_count.get())
+            if self.kind=='hunger-tree' and count!=1:raise ValueError('Hunger-tree experiments have one prey per first life')
 
             if not 0<=seed<2**63 or not 1<=count<=12 or not 0<seconds<=3600 or abs(round(seconds/DT)*DT-seconds)>1e-8:
 
@@ -407,7 +484,15 @@ class PursuitViewer:
 
             seed_key=self.controller.get();generation=self.generation.get()
 
-            genomes=self.champions[seed_key] if generation=='Final' else np.asarray(self.history[f'{seed_key}/{generation}'],float)
+            if self.kind=='hunger-tree':
+                control=self.rules.get('control_prey') if self.prey_condition.get()=='Fixed predator control' else None
+                champions=control['champions'] if control else self.champions;history=control['history'] if control else self.history
+                tree=BASELINE if generation=='Scripted baseline' else action('stay') if generation=='Stationary' else champions[seed_key] if generation=='Final' else history[f'{seed_key}/{generation}']
+                predators=self.rules.get('predator_trees');pred_tree=None
+                if predators:
+                    pg=self.predator_generation.get()
+                    pred_tree=predators['baseline'] if pg=='Fixed baseline' else predators['champions'][seed_key] if pg=='Final' else predators['history'][f'{seed_key}/{pg}']
+            else:genomes=self.champions[seed_key] if generation=='Final' else np.asarray(self.history[f'{seed_key}/{generation}'],float)
 
             scale=float(self.food_scale.get())
 
@@ -415,7 +500,10 @@ class PursuitViewer:
 
             rules=dict(self.rules,prey_count=count,food_spawn_mode='soft' if self.food_mode.get()=='Soft distance bias' else 'strict',food_spawn_scale=scale)
 
-            generator=continuous_steps(genomes[0][None],genomes[1][None],[seed],world,rules,seconds,emit=True)
+            if self.kind=='hunger-tree':
+                config=dict(rules['hunger_config'],seconds=seconds,food_spawn_mode=rules['food_spawn_mode'],food_spawn_scale=scale)
+                generator=viewer_steps(tree,seed,world,config,predator_tree=pred_tree)
+            else:generator=continuous_steps(genomes[0][None],genomes[1][None],[seed],world,rules,seconds,emit=True)
 
             first=next(generator)
 
@@ -432,12 +520,18 @@ class PursuitViewer:
         self.base=Image.fromarray(np.where(self.solid[:,:,None],[108,119,116],[232,228,206]).astype('uint8')).convert('RGBA')
 
         self.frame=first;self.trail.clear();self.trail.append(first);self.outlines.clear()
+        self.tree_widget.configure(state='normal');self.tree_widget.delete('1.0','end')
+        self.tree_widget.insert('1.0',(('PREDATOR\n'+tree_text(pred_tree)+'\n\nPREY\n') if pred_tree is not None else '')+tree_text(tree) if self.kind=='hunger-tree' else 'Neural movement controller: no decision tree is encoded in this run.')
+        self.tree_widget.configure(state='disabled')
 
         self.ensure_display(count)
 
         self.rule_text.set(f'Vision: predator {rules["predator_vision"]:g}, prey {rules["prey_vision"]:g}\nOcclusion: {"on" if rules.get("vision_occlusion") else "off"} · collisions: {"on" if rules.get("prey_collisions") else "off"}\nRandom targets: {"on" if rules.get("random_prey_targets") else "off"} · food: {rules['food_spawn_mode']}')
 
-        self.status.set('Live continuous evaluation · map changes restart the encounter · display toggles do not change physics')
+        if self.kind=='hunger-tree':
+            opponent='fixed predator' if pred_tree is None else 'predator tree: '+self.predator_generation.get()
+            self.rule_text.set(f'Hunger-tree first life | {opponent}\nReserve: {config["initial_hunger"]:g}/{config["maximum_hunger"]:g}; drain {config["metabolism"]:g}/s; pellet +{config["pellet_energy"]:g}\nNo prey respawn. Initial food uniform; respawn {rules["food_spawn_mode"]}.')
+        self.status.set('Live first-life evaluation | capture/starvation ends the encounter | no training' if self.kind=='hunger-tree' else 'Live continuous evaluation · map changes restart the encounter · display toggles do not change physics')
 
         self.draw();return True
 
@@ -477,7 +571,11 @@ class PursuitViewer:
 
         if self.generator is None:return
 
-        try:self.frame=next(self.generator);self.trail.append(self.frame)
+        try:
+            self.frame=next(self.generator);self.trail.append(self.frame)
+            if self.frame.get('first_life') and self.frame.get('death') is not None:
+                self.generator.close();self.generator=None;self.playing=False;self.play_button.config(text='Play')
+                self.status.set(f'First life ended: {self.frame["death"]} at {self.frame["seconds"]:.2f}s. Play restarts the same encounter; New encounter changes the seed.')
 
         except StopIteration:
 
@@ -598,8 +696,10 @@ class PursuitViewer:
                 if active:segment.extend(coords(frame['positions'][focus]))
             if len(segment)>=4:c.create_line(*segment,fill=COLORS[focus%len(COLORS)],width=2,tags=('trail',f'trail-{focus}'))
         for j,point in enumerate(f['positions']):
-            if j and not f['active'][j-1]:continue
+            if j==0 and not f.get('predator_enabled',True):continue
+            if j and not f['active'][j-1] and not f.get('first_life'):continue
             flags={name:j in selected and bool(var.get()) for name,var in self.flags.items()};color=COLORS[j%len(COLORS)];x,y=coords(point)
+            if j and not f['active'][j-1]:color='#888888'
             if flags['Vision']:
                 radius=self.active_rules['predator_vision' if j==0 else 'prey_vision']
                 if self.active_rules.get('vision_occlusion',False):
@@ -622,6 +722,9 @@ class PursuitViewer:
             if flags['Labels']:c.create_text(x,y-r-9,text='Predator' if j==0 else f'Prey {j}',fill='#172321',font=('Segoe UI',10,'bold'),tags=('label',f'label-{j}'))
         modes=' | '.join(('P' if j==0 else str(j))+': '+mode for j,mode in enumerate(f['modes']))
         self.stats.set(f'Time {f["seconds"]:.1f}s   |   Captures {f["captures"]}   |   Food {sum(f["food"]):g}   |   Active prey {sum(f["active"])}/{len(f["active"])}\n{modes}')
+        if f.get('first_life'):
+            self.hunger_value.set(max(0,min(1,f['hunger']/f['maximum_hunger'])))
+            self.hunger_info.set(f'Hunger reserve {f["hunger"]:.1f}/{f["maximum_hunger"]:g}'+(f' | {f["death"]}' if f['death'] else ''))
 
     def close(self):
 
