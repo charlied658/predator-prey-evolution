@@ -34,6 +34,28 @@ class HungerViewerChecks(unittest.TestCase):
                 try:root.destroy()
                 except tk.TclError:pass
 
+    def test_predator_fitness_conditions_use_one_fixed_prey(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory);config=dict(DEFAULTS,seconds=2)
+            (path/'terrain.json').write_text(json.dumps(dict(resolution=96,solid=[0]*96**2)))
+            (path/'design.json').write_text(json.dumps(dict(config=config,evaluation_seed_base=350000000)))
+            models={'capture-only':dict(champions={'0':action('stay')},history={'0/0':action('stay')},baseline=PREDATOR_BASELINE),'progress-0.1':dict(champions={'0':PREDATOR_BASELINE},history={'0/0':PREDATOR_BASELINE},baseline=PREDATOR_BASELINE)}
+            saved=dict(champions={'0':BASELINE},history={'0/0':BASELINE},predator_champions=models['capture-only']['champions'],predator_history=models['capture-only']['history'],predator_conditions=models)
+            (path/'trees.json').write_text(json.dumps(saved))
+            root=tk.Tk();root.withdraw()
+            try:
+                viewer=PursuitViewer(root,path,autoplay=False)
+                self.assertEqual(viewer.seed.get(),'350000000')
+                self.assertEqual(tuple(viewer.condition_box['values']),tuple(models))
+                viewer.single_step();self.assertEqual(viewer.frame['modes'][0],'stay')
+                viewer.prey_condition.set('progress-0.1');viewer.condition_changed();viewer.single_step()
+                self.assertNotEqual(viewer.frame['modes'][0],'stay')
+                self.assertEqual(viewer.champions['0'],BASELINE)
+                viewer.close()
+            finally:
+                try:root.destroy()
+                except tk.TclError:pass
+
     def test_desktop_load_step_play_restart_and_map_change(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory);terrain=dict(resolution=96,solid=[0]*96**2)

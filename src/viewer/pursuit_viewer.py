@@ -116,6 +116,9 @@ def load_tree_run(path):
     for tree in list(champions.values())+list(history.values()):validate(tree)
     predators=saved.get('predator_champions',{});predator_history=saved.get('predator_history',{})
     for tree in list(predators.values())+list(predator_history.values()):validate(tree,role='predator')
+    conditions=saved.get('predator_conditions',{})
+    for model in conditions.values():
+        for tree in list(model['champions'].values())+list(model['history'].values()):validate(tree,role='predator')
     for tree in list(saved.get('fixed_champions',{}).values())+list(saved.get('fixed_history',{}).values()):validate(tree)
     if predators and set(predators)!=set(champions):raise ValueError('Missing paired predator controllers')
     config=dict(HUNGER_DEFAULTS,**design['config'])
@@ -128,6 +131,8 @@ def load_tree_run(path):
     if predators:
         rules['predator_trees']=dict(champions=predators,history=predator_history,baseline=saved.get('baseline_predator',PREDATOR_BASELINE))
         rules['control_prey']=dict(champions=saved.get('fixed_champions',{}),history=saved.get('fixed_history',{}))
+    if conditions:rules['predator_conditions']=conditions
+    rules['evaluation_seed_base']=design.get('evaluation_seed_base',200000000 if predators else 90000000)
     if (path/'terrain.json').exists():terrain=load_terrain(path/'terrain.json')
     elif not design.get('budget',{}).get('terrain_map'):terrain=dict(resolution=96,solid=[0]*96**2,preset='Empty arena')
     else:raise ValueError('Tree run is missing its terrain snapshot')
@@ -231,7 +236,7 @@ class PursuitViewer:
         self.controller_box=combo(run,'Controller seed',self.controller,[],self.controller_changed)
 
         self.generation_box=combo(run,'Saved generation',self.generation,['Final'],self.restart)
-        self.condition_box=combo(run,'Prey training condition',self.prey_condition,['Saved controller'],self.condition_changed)
+        self.condition_box=combo(run,'Training condition',self.prey_condition,['Saved controller'],self.condition_changed)
         self.predator_box=combo(run,'Predator generation',self.predator_generation,['Fixed baseline'],self.restart)
 
         form=ttk.Frame(run);form.pack(fill='x',pady=12)
@@ -347,9 +352,10 @@ class PursuitViewer:
         self.run=path;self.champions=champions;self.rules=rules;self.history=history
         self.kind=rules.get('controller_kind','neural')
         paired=bool(rules.get('predator_trees'))
-        self.condition_box.configure(values=['Co-evolution','Fixed predator control'] if paired else ['Saved controller'],state='readonly' if paired else 'disabled')
-        self.prey_condition.set('Co-evolution' if paired else 'Saved controller')
-        if paired:self.seed.set('200000000')
+        conditions=list(rules.get('predator_conditions',{})) or (['Co-evolution']+(['Fixed predator control'] if rules.get('control_prey',{}).get('champions') else []) if paired else ['Saved controller'])
+        self.condition_box.configure(values=conditions,state='readonly' if paired else 'disabled')
+        self.prey_condition.set(conditions[0])
+        if paired:self.seed.set(str(rules['evaluation_seed_base']))
         self.predator_generation.set('Final' if paired else 'Fixed baseline');self.predator_box.configure(state='readonly' if paired else 'disabled')
         self.prey_count_widget.configure(state='disabled' if self.kind=='hunger-tree' else 'normal')
         if self.kind=='hunger-tree':
@@ -396,6 +402,7 @@ class PursuitViewer:
 
         if self.generation.get() not in values:self.generation.set('Final')
         pred=self.rules.get('predator_trees')
+        if self.rules.get('predator_conditions'):pred=self.rules['predator_conditions'][self.prey_condition.get()]
         pred_values=['Fixed baseline'] if not pred else ['Final','Fixed baseline']+[str(g) for g in sorted(int(k.split('/')[1]) for k in pred['history'] if k.split('/')[0]==self.controller.get())]
         self.predator_box['values']=pred_values
         if self.predator_generation.get() not in pred_values:self.predator_generation.set(pred_values[0])
@@ -404,7 +411,7 @@ class PursuitViewer:
 
     def condition_changed(self):
         self.predator_generation.set('Fixed baseline' if self.prey_condition.get()=='Fixed predator control' else 'Final')
-        self.restart()
+        self.controller_changed()
 
     def generate_map(self):
         try:
@@ -489,6 +496,7 @@ class PursuitViewer:
                 champions=control['champions'] if control else self.champions;history=control['history'] if control else self.history
                 tree=BASELINE if generation=='Scripted baseline' else action('stay') if generation=='Stationary' else champions[seed_key] if generation=='Final' else history[f'{seed_key}/{generation}']
                 predators=self.rules.get('predator_trees');pred_tree=None
+                if self.rules.get('predator_conditions'):predators=self.rules['predator_conditions'][self.prey_condition.get()]
                 if predators:
                     pg=self.predator_generation.get()
                     pred_tree=predators['baseline'] if pg=='Fixed baseline' else predators['champions'][seed_key] if pg=='Final' else predators['history'][f'{seed_key}/{pg}']

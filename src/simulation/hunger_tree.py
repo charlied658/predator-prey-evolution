@@ -179,14 +179,14 @@ def hunger_events(hunger,events,dt,config):
     return dt,None,hunger-config['metabolism']*remaining,collected
 
 
-def episode(tree,scenario,world,config=None,trace=None,predator_tree=None):
-    steps=episode_steps(tree,scenario,world,config,trace,predator_tree=predator_tree)
+def episode(tree,scenario,world,config=None,trace=None,predator_tree=None,diagnostics=None):
+    steps=episode_steps(tree,scenario,world,config,trace,predator_tree=predator_tree,diagnostics=diagnostics)
     while True:
         try:next(steps)
         except StopIteration as finished:return finished.value
 
 
-def episode_steps(tree,scenario,world,config=None,trace=None,emit=False,predator_tree=None):
+def episode_steps(tree,scenario,world,config=None,trace=None,emit=False,predator_tree=None,diagnostics=None):
     """The same scored episode, exposed one physics tick at a time for viewing."""
     config=dict(DEFAULTS,**(config or {}));rng=np.random.default_rng(int(scenario))
     collider,sites,_=world;nav=navigation(world)
@@ -194,6 +194,7 @@ def episode_steps(tree,scenario,world,config=None,trace=None,emit=False,predator
     candidates=sites[(np.linalg.norm(sites-prey,axis=1)>=24)&(np.linalg.norm(sites-prey,axis=1)<=48)]
     if not len(candidates):raise ValueError('Map lacks predator spawn space 24–48 cells from prey')
     predator=candidates[rng.integers(len(candidates))].copy()
+    initial_distance=float(np.linalg.norm(predator-prey));closest_distance=initial_distance
     pellets=[]
     for _ in range(config['pellets']):
         p=spawn_site(rng,sites,[],0,[prey,predator],collider.radius,pellets)
@@ -254,12 +255,16 @@ def episode_steps(tree,scenario,world,config=None,trace=None,emit=False,predator
         collected+=len(picked);available[picked]=False
         if reason:
             prey=interpolate_path(paths[1],[duration/DT])[0];predator=interpolate_path(paths[0],[duration/DT])[0]
+            if diagnostics is not None:closest_distance=min(closest_distance,float(np.linalg.norm(predator-prey)))
             seconds+=duration;death=reason;yield record();break
         # Food respawns, but prey never respawn in a scored first life.
         for index in np.flatnonzero(~available):
             point=spawn_food(rng,sites,[prey],[prey,predator],collider.radius,pellets[available],dict(food_spawn_mode=config.get('food_spawn_mode','soft'),food_spawn_scale=config.get('food_spawn_scale',12)))
             if point is not None:pellets[index]=point;available[index]=True
         seconds=(tick+1)*DT;velocity=(prey-old)/DT;pred_velocity=(predator-old_pred)/DT;memory.mark(prey,seconds);pred_memory.mark(predator,seconds);yield record()
+        if diagnostics is not None:closest_distance=min(closest_distance,float(np.linalg.norm(predator-prey)))
+    if diagnostics is not None:
+        diagnostics.update(initial_distance=initial_distance,closest_distance=closest_distance,final_distance=float(np.linalg.norm(predator-prey)))
     return dict(survival=float(seconds),food=int(collected),death=death,final_hunger=float(hunger))
 
 

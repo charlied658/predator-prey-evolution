@@ -246,3 +246,89 @@ to the control selects the fixed baseline predator. Both programs appear in the
 Tree tab. Encounter seed is independent of training seed; the first held-out
 start for seed N is 200000000 + 1000*N. Outcomes, raw matchups, readable programs,
 source anchors and the exact design are saved with the run.
+
+## Predator-only fitness diagnostic
+
+```powershell
+.\.venv\Scripts\python.exe -u -m src.experiments.predator_fitness_pilot --output results/predator-fitness-next
+```
+
+This holds the scripted prey policy fixed for every evolutionary seed, rather
+than inheriting different prey per seed. Only predator trees evolve. The empty
+arena, speeds, vision, hunger and primitives remain unchanged. Conditions share
+initial predator populations per seed and the resampled training scenario
+schedule. The held-out scenario suite is common to all seeds and conditions.
+
+Compare capture*(2-time/horizon), with added bounded distance-progress bonuses
+weighted by 0.1 or 0.5. Progress is clip((initial_distance-closest_distance) /
+initial_distance,0,1), sampled at 0.1-second step boundaries and exact death
+positions. The fitness evaluator sees true separation; predator observations
+still mask unseen prey. A shaping bonus is not a capture. Report actual held-out
+capture fraction and capture time separately; failed encounters are assigned the
+full horizon in the capped capture-time diagnostic. Starvation is never a capture.
+
+Default: three seeds, six generations, six predators, four fresh training starts
+per generation, 16 held-out starts, and checkpoints every three generations.
+Training CSV records zero-score and no-capture population fractions. Outcomes,
+scores, diagnostics and all trees are saved. Repeated episodes, common initial
+populations, and the original scripted predator reference use a shared cache.
+The pilot does not establish an optimal shaping weight or guarantee more captures.
+
+```powershell
+.\.venv\Scripts\python.exe evolution/pursuit_viewer.py results/predator-fitness-pilot
+```
+
+Training condition selects the fitness variant; predator generation selects a
+saved controller. Prey remains fixed unless explicitly changed to a viewer
+reference. The first held-out scenario is 350000000 and the suite is the same
+for every evolutionary seed. Existing trained runs and fitness are unchanged.
+
+For fixed prey that only collects visible food and explores when none is visible,
+without predator avoidance, run:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m src.experiments.predator_fitness_pilot --prey-policy food-only --output results/predator-food-only-pilot
+```
+
+This removes only the prey avoidance branch. Speeds, vision, hunger, scenario
+seeds and predator evolution settings stay unchanged; saved replays use the
+selected prey policy. The original avoidance policy remains the default.
+
+To match the original prey experiment's random-tree initialization, train only
+the capture/time fitness condition against fixed food-only prey:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m src.experiments.predator_fitness_pilot --prey-policy food-only --initialization random --methods capture-only --seeds 10 --generations 20 --population 12 --training-starts 16 --test-starts 32 --eval-every 5 --output results/predator-random-trees
+```
+
+Random initialization does not insert the scripted predator or its mutants.
+The script is evaluated separately as a benchmark. Each seed's initial population
+is saved for inspection. Selection, mutation, physics and training/test scenario
+schedules are unchanged. Generation 0 shows the initial training-selected winner.
+Learning would support the usefulness of this fitness signal, not prove that
+it is optimal. The older baseline initialization remains the default.
+
+## Co-evolution from random trees
+
+```powershell
+.\.venv\Scripts\python.exe -u -m src.experiments.hunger_coevolution --initialization random --no-fixed-control --seeds 10 --generations 20 --population 12 --opponents 3 --training-starts 4 --test-starts 16 --eval-every 5 --output results/coevolution-random-trees
+```
+
+Both species start with independent random decision trees. No pretrained source
+is loaded and neither manual baseline is inserted into the populations. The
+fixed control training population is skipped. Prey survival with hunger and
+predator capture/speed fitness are unchanged, as are physics and navigation.
+Each candidate faces the same sampled opposing individuals and starting layouts
+within its generation; both populations update simultaneously using two elites,
+tournament selection and mutation. Prey can evolve predator avoidance.
+
+Fixed scripted predator and food-only prey are evaluation references only.
+Reports include held-out reference performance, contemporary matchups and
+historical checkpoint matchups. Generation 0 shows training-selected winners.
+The manual movement/action primitives remain available: random trees do not
+mean learning locomotion from scratch. Initial populations and checkpoints are
+saved, and the existing viewer supports both species' saved generations:
+
+```powershell
+.\.venv\Scripts\python.exe evolution/pursuit_viewer.py results/coevolution-random-trees
+```
